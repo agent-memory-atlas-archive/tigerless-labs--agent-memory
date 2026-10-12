@@ -46,7 +46,7 @@ KEY_DISTILL = "distill"
 DISTILL_LAUNCHED = "launched"
 DISTILL_SKIPPED = "skipped"
 SESSION_FLAG = "--session"
-REASON_HOST_FLAG = "--reason-host"
+SOURCE_HOST_FLAG = "--source-host"
 HOST_FLAG = "--host"
 STORE_FLAG = "--store"
 MUSE_DATA_HOME_FLAG = "--muse-data-home"
@@ -167,7 +167,7 @@ def launch_distill(store: Store, session: str, host: str) -> bool:
         store.layout.state_dir.mkdir(parents=True, exist_ok=True)
         with (store.layout.state_dir / LOG_FILENAME).open("a", encoding="utf-8") as log:
             subprocess.Popen(
-                [*command, SESSION_FLAG, session, REASON_HOST_FLAG, host],
+                [*command, SESSION_FLAG, session, SOURCE_HOST_FLAG, host],
                 env=environment,
                 stdin=subprocess.DEVNULL,
                 stdout=log,

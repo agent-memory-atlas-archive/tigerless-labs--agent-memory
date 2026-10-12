@@ -5,12 +5,17 @@ eviction, and pause moments. Executor dialects translate a prompt and tool postu
 headless host invocation and normalize only its final answer. Capture, archive, distillation,
 Memory, Recall, and Manage stay host-neutral.
 
-The host that produced a lifecycle boundary is the default reasoner for Distillation and
-Manage. Model endpoints are an explicit Store-level opt-in: their endpoint credential or
-Google Cloud project belongs to the Store operator, never to Tigerless. Authentication,
-transport, host-process, and response-shape failures are observable executor failures;
-Distillation retains the unsettled archive backlog instead of treating an empty response as a
-completed projection.
+Write and Manage have independent Store-level reasoner policies. Explicit CLI choices override
+the operation policy, which overrides the legacy executor policy. Without an operation policy,
+automatic Write uses the host that produced the source session while Manage uses the legacy
+Store executor. The source host remains capture metadata and never overrides an explicit Write
+reasoner.
+
+Each operation may use a supported host CLI or a user-owned model endpoint. Authentication,
+transport, host-process, and response-shape failures are attributed to that operation and stop
+the attempt without selecting another host or endpoint. Write retains the unsettled archive
+backlog, and every accepted memory continues to cite the original source session. Headless
+reasoner sessions carry the executor marker so their lifecycle hooks remain inert.
 
 `muse-code` is the canonical Muse Code identity and `muse` is only a setup alias and binary
 name. Muse lifecycle events use the existing moments, and only root-session material enters the

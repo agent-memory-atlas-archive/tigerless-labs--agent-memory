@@ -21,7 +21,7 @@ from agent_memory.core.reasoning import Reasoner
 from agent_memory.core.recall import Recall
 from agent_memory.core.store import LEVEL_FULL, LEVELS, Store
 from agent_memory.core.watermark import Watermark
-from agent_memory.executor import distiller
+from agent_memory.executor import distiller, selection
 
 SESSION_FLAG = "--session"
 REASON_HOST = REASONER_HOST
@@ -158,6 +158,11 @@ def _parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="distill every backlog regardless of thresholds"
     )
     still.add_argument("--reason", choices=(REASON_HOST, REASON_ENDPOINT), default=None)
+    still.add_argument(
+        "--source-host",
+        default="",
+        help="host that produced the archived session; used by the default Write policy",
+    )
     still.add_argument("--reason-host", default=None)
     still.add_argument("--reason-model", default="")
     still.set_defaults(handler=_distill)
@@ -376,7 +381,8 @@ def _distill(store: Store, args: argparse.Namespace) -> dict[str, object]:
     watermark = Watermark(store.layout, store.clock)
     named = list(args.session or [])
     candidates = named or sorted(set(watermark.sessions()) | set(_archived_sessions(store)))
-    ask = _reasoner(store, args) or distiller.distiller(store.config.executor)
+    ask = _reasoner(store, args, selection.WRITE, source_host=args.source_host)
+    assert ask is not None
     now = store.clock.now().isoformat()
     reports = []
     queue = pending.Pending(store.layout)
@@ -481,20 +487,29 @@ def _sleep(store: Store, args: argparse.Namespace) -> dict[str, object]:
     manage = Manage(store)
     if args.sessions_since is not None and not manage.due(args.sessions_since):
         return {"slept": False, "reason": "trigger conditions not met"}
-    return {"slept": True, **manage.sleep(reasoner=_reasoner(store, args)).as_dict()}
+    return {
+        "slept": True,
+        **manage.sleep(reasoner=_reasoner(store, args, selection.MANAGE)).as_dict(),
+    }
 
 
-def _reasoner(store: Store, args: argparse.Namespace) -> Reasoner | None:
+def _reasoner(
+    store: Store,
+    args: argparse.Namespace,
+    operation: str,
+    *,
+    source_host: str = "",
+) -> Reasoner | None:
     if args.reason == REASON_NONE:
         return None
-    executor = store.config.executor
-    if args.reason:
-        executor = dataclasses.replace(executor, reasoner=args.reason)
-    if args.reason_host:
-        executor = dataclasses.replace(executor, host=args.reason_host)
-    if args.reason_model:
-        model_knob = "model" if executor.reasoner == REASON_ENDPOINT else "host_model"
-        executor = dataclasses.replace(executor, **{model_knob: args.reason_model})
+    executor = selection.resolve(
+        store.config.executor,
+        operation,
+        source_host=source_host,
+        reasoner=args.reason or "",
+        host=args.reason_host or "",
+        model=args.reason_model,
+    )
     return distiller.distiller(executor)
 
 

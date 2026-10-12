@@ -3,7 +3,9 @@
 import json
 
 import pytest
+from agent_memory.adapters import capture as capture_module
 from agent_memory.cli.main import EXIT_ERROR, EXIT_INVALID, EXIT_OK, main
+from agent_memory.core.config import OperationExecutorConfig
 from agent_memory.core.errors import ReasonerUnavailableError
 from agent_memory.core.recall import Recall
 from agent_memory.core.store import Store
@@ -486,6 +488,52 @@ def test_a_plain_sleep_asks_the_library_executor(cli, monkeypatch):
     )
     report = cli("sleep")
     assert [decision["proposal"] for decision in report["decisions"]] == [proposal["id"]]
+
+
+def test_write_and_manage_select_their_own_reasoners_and_cli_wins(cli, monkeypatch):
+    store = Store(cli.root)
+    store.config.executor.write = OperationExecutorConfig(reasoner="host", host="muse-code")
+    store.config.executor.manage = OperationExecutorConfig(reasoner="host", host="codex")
+    store.config.save(store.root)
+    capture_module.capture(store, "source-session", ["user: deploys happen on Friday"])
+    selected = []
+
+    def reasoner(config):
+        selected.append(config)
+        return lambda _prompt: json.dumps(
+            {
+                "type": "fact",
+                "fields": {"project": "deploy", "subject": "deploy day"},
+                "abstract": "Deploys happen on Friday",
+                "provenance": ["0"],
+            }
+        )
+
+    monkeypatch.setattr("agent_memory.executor.distiller.distiller", reasoner)
+
+    cli("distill", "--session", "source-session", "--source-host", "codex")
+    assert selected[-1].host == "muse-code"
+
+    capture_module.capture(store, "override-session", ["user: releases happen on Monday"])
+    cli(
+        "distill",
+        "--session",
+        "override-session",
+        "--source-host",
+        "muse-code",
+        "--reason",
+        "host",
+        "--reason-host",
+        "codex",
+    )
+    assert selected[-1].host == "codex"
+
+    _near_duplicates(cli)
+    cli("sleep")
+    assert selected[-1].host == "codex"
+
+    cli("sleep", "--reason", "host", "--reason-host", "muse-code")
+    assert selected[-1].host == "muse-code"
 
 
 def test_sleep_reports_a_reasoner_failure_instead_of_succeeding_silently(cli, monkeypatch):
