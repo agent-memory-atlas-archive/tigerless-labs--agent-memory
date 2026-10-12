@@ -253,6 +253,20 @@ failed selected host, credential, request, or endpoint response never switches t
 leaves the original archived backlog eligible for retry. Detached boundary failures are recorded
 in the Store's `.state/hooks.log`.
 
+After a boundary Distillation catches up, the same short-lived process checks whether Manage is
+due. It counts distinct completed sessions, waits for all captured Write work to settle, claims the
+Dream once across Hosts, and starts a detached one-shot worker using the Host that won the claim.
+The worker writes the normal Dream report and decision ledger, then exits. Repeated Stop,
+SessionEnd, or PreCompact events do not inflate progress or duplicate the Dream. Inspect an active
+claim or failure with `mem --json dream-status`; a later lifecycle event retries failed or stale
+work. Manual `mem sleep` remains available.
+
+Automatic Dreaming is enabled by `manage.auto_dream` and can be rolled back by setting it to
+`false`. `manage.claim_lease_seconds` controls crash-recovery eligibility. There is no installed
+timer or resident Memory process: if every Host is inactive when the time threshold passes, work
+runs only after the next SessionStart or boundary event. Wall-clock execution requires an explicit
+external cron or systemd timer and is not part of default setup.
+
 To use Vertex AI, enable it in a Google Cloud project you control, grant the calling identity
 prediction access, authenticate the `gcloud` CLI, and configure that project explicitly:
 

@@ -11,10 +11,11 @@ from collections.abc import Sequence
 
 from agent_memory.core import context as context_module
 from agent_memory.core import distill as distill_module
+from agent_memory.core import dreaming, pending, portability, prompts, reasoning, sessions, triggers
 from agent_memory.core import migrate as migrate_module
-from agent_memory.core import pending, portability, prompts, reasoning, sessions, triggers
 from agent_memory.core.config import REASONER_ENDPOINT, REASONER_HOST
 from agent_memory.core.errors import FieldError, MemoryStoreError, ValidationError
+from agent_memory.core.locking import file_lock
 from agent_memory.core.manage import Manage
 from agent_memory.core.observation import invoke as observe_invocation
 from agent_memory.core.reasoning import Reasoner
@@ -165,7 +166,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     still.add_argument("--reason-host", default=None)
     still.add_argument("--reason-model", default="")
+    still.add_argument("--auto-dream", action="store_true", help=argparse.SUPPRESS)
     still.set_defaults(handler=_distill)
+
+    dreamer = subparsers.add_parser("dream-worker", help=argparse.SUPPRESS)
+    dreamer.add_argument("--claim", required=True)
+    dreamer.add_argument("--reason-host", required=True)
+    dreamer.add_argument("--reason-model", default="")
+    dreamer.set_defaults(handler=_dream_worker, reason=REASON_HOST)
 
     tracer = subparsers.add_parser("trace", help="open the messages a memory cites")
     tracer.add_argument("name")
@@ -192,6 +200,11 @@ def _parser() -> argparse.ArgumentParser:
 
     inspector = subparsers.add_parser("inspect", help="store health")
     inspector.set_defaults(handler=_inspect)
+
+    dream_status = subparsers.add_parser(
+        "dream-status", help="show automatic Dream claim, failure, and progress state"
+    )
+    dream_status.set_defaults(handler=_dream_status)
 
     exporter = subparsers.add_parser("export", help="export the whole store")
     exporter.add_argument("--out", default=None)
@@ -387,26 +400,50 @@ def _distill(store: Store, args: argparse.Namespace) -> dict[str, object]:
     reports = []
     queue = pending.Pending(store.layout)
     for session in sorted(set(candidates) | set(queue.redistill_sessions())):
-        requested = tuple(queue.redistill(session))
-        backlog = triggers.backlog(store.layout, session, watermark, requested)
-        reason = (
-            triggers.REASON_FORCED
-            if args.force
-            else triggers.reason_for(
-                store.config.write,
-                watermark.read(session),
-                backlog,
-                now,
-                session in named,
-                bool(requested),
+        with (
+            file_lock(dreaming.distill_lock_path(store, session), timeout=None),
+            file_lock(store.layout.maintenance_lock, shared=True, timeout=None),
+        ):
+            requested = tuple(queue.redistill(session))
+            backlog = triggers.backlog(store.layout, session, watermark, requested)
+            reason = (
+                triggers.REASON_FORCED
+                if args.force
+                else triggers.reason_for(
+                    store.config.write,
+                    watermark.read(session),
+                    backlog,
+                    now,
+                    session in named,
+                    bool(requested),
+                )
             )
+            if reason is None:
+                continue
+            report = distill_module.distill(store, session, backlog, ask)
+            queue.clear_redistill(session)
+            reports.append({"reason": reason, **report.as_dict()})
+    payload: dict[str, object] = {"distilled": reports}
+    if args.auto_dream:
+        from agent_memory.adapters import auto_dream
+
+        scheduled = auto_dream.launch(
+            store,
+            args.source_host or args.reason_host or store.config.executor.host,
         )
-        if reason is None:
-            continue
-        report = distill_module.distill(store, session, backlog, ask)
-        queue.clear_redistill(session)
-        reports.append({"reason": reason, **report.as_dict()})
-    return {"distilled": reports}
+        payload["auto_dream"] = {
+            "launched": scheduled.claim is not None,
+            "reason": scheduled.reason,
+            "sessions_since": scheduled.sessions_since,
+            **({"claim": scheduled.claim.id} if scheduled.claim else {}),
+        }
+    return payload
+
+
+def _dream_worker(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    from agent_memory.adapters import auto_dream
+
+    return auto_dream.run_worker(store, args.claim, _reasoner(store, args, selection.MANAGE))
 
 
 def _archived_sessions(store: Store) -> list[str]:
@@ -466,6 +503,19 @@ def _inspect(store: Store, args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _dream_status(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    status = dreaming.state(store)
+    complete = set(dreaming.completed_sessions(store))
+    raw_covered = status.get("covered_sessions", [])
+    covered = {str(item) for item in raw_covered} if isinstance(raw_covered, list) else set()
+    return {
+        **status,
+        "completed_sessions": len(complete),
+        "sessions_since": len(complete - covered),
+        "write_settled": dreaming.write_is_settled(store),
+    }
+
+
 def _export(store: Store, args: argparse.Namespace) -> dict[str, object]:
     payload = portability.export_store(store, include_archive=not args.no_archive)
     if args.out:
@@ -487,10 +537,13 @@ def _sleep(store: Store, args: argparse.Namespace) -> dict[str, object]:
     manage = Manage(store)
     if args.sessions_since is not None and not manage.due(args.sessions_since):
         return {"slept": False, "reason": "trigger conditions not met"}
-    return {
-        "slept": True,
-        **manage.sleep(reasoner=_reasoner(store, args, selection.MANAGE)).as_dict(),
-    }
+    with (
+        file_lock(store.layout.dream_run_lock, timeout=None),
+        file_lock(store.layout.maintenance_lock, timeout=None),
+    ):
+        report = manage.sleep(reasoner=_reasoner(store, args, selection.MANAGE))
+    dreaming.record_manual_success(store, report.path)
+    return {"slept": True, **report.as_dict()}
 
 
 def _reasoner(

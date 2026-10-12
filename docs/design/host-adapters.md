@@ -17,6 +17,11 @@ the attempt without selecting another host or endpoint. Write retains the unsett
 backlog, and every accepted memory continues to cite the original source session. Headless
 reasoner sessions carry the executor marker so their lifecycle hooks remain inert.
 
+Automatic Manage deliberately uses the lifecycle Host that first claims due shared-Store work;
+it never falls back to an endpoint. On a fresh Host-backed Store, the first successful Host setup
+also supplies the default manual Manage policy. Explicit operation policies and legacy endpoint
+configuration are preserved.
+
 `muse-code` is the canonical Muse Code identity and `muse` is only a setup alias and binary
 name. Muse lifecycle events use the existing moments, and only root-session material enters the
 archive. Muse's native memory remains independent and is never copied, synchronized, or treated

@@ -14,6 +14,10 @@ EXECUTOR_ENV_VAR = "AGENT_MEMORY_EXECUTOR"
 MUSE_SETTINGS_ENV_VAR = "AGENT_MEMORY_MUSE_SETTINGS"
 REASONER_HOST = "host"
 REASONER_ENDPOINT = "endpoint"
+COORDINATION_LOCK_POLL_SECONDS = 0.02
+DREAM_CLAIM_ID_LENGTH = 20
+DREAM_ERROR_MAX_CHARS = 1000
+STATE_JSON_INDENT = 2
 DEFAULT_STORE = "~/agent-memory-store"
 LEGACY_KNOBS = {
     "index": frozenset({"raw_chunk_chars"}),
@@ -91,6 +95,8 @@ class RecallConfig:
 
 @dataclasses.dataclass
 class ManageConfig:
+    auto_dream: bool = True
+    claim_lease_seconds: float = 1800.0
     trigger_min_hours: float = 24.0
     trigger_min_sessions: int = 3
     cluster_min_files: int = 5
