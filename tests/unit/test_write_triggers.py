@@ -210,7 +210,8 @@ def test_the_launched_executor_call_is_one_the_cli_accepts(store, monkeypatch):
     assert hook_entry.launch_distill(store, "session-x", moments.HOST_CODEX)
     args = _parser().parse_args(launched["command"][1:])
     assert args.session == ["session-x"]
-    assert args.reason_host == moments.HOST_CODEX
+    assert args.source_host == moments.HOST_CODEX
+    assert args.reason_host is None
     assert launched["env"][STORE_ENV_VAR] == str(store.root)
     assert launched["env"][EXECUTOR_ENV_VAR]
     expected_log = store.layout.state_dir / hook_entry.LOG_FILENAME

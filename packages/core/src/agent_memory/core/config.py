@@ -6,6 +6,7 @@ import dataclasses
 import os
 import pathlib
 import tomllib
+from typing import Any
 
 CONFIG_FILENAME = "config.toml"
 STORE_ENV_VAR = "AGENT_MEMORY_STORE"
@@ -130,6 +131,18 @@ class WriteConfig:
 
 
 @dataclasses.dataclass
+class OperationExecutorConfig:
+    reasoner: str = ""
+    host: str = ""
+    host_model: str = ""
+    model: str = ""
+    endpoint: str = ""
+    project: str = ""
+    location: str = ""
+    timeout_seconds: float = 0.0
+
+
+@dataclasses.dataclass
 class ExecutorConfig:
     reasoner: str = REASONER_HOST
     host: str = "claude-code"
@@ -140,6 +153,8 @@ class ExecutorConfig:
     location: str = "global"
     timeout_seconds: float = 120.0
     command: str = "mem distill"
+    write: OperationExecutorConfig = dataclasses.field(default_factory=OperationExecutorConfig)
+    manage: OperationExecutorConfig = dataclasses.field(default_factory=OperationExecutorConfig)
 
 
 @dataclasses.dataclass
@@ -168,13 +183,7 @@ class Config:
             section = getattr(config, section_name, None)
             if section is None or not dataclasses.is_dataclass(section):
                 raise ValueError(f"unknown config section: {section_name}")
-            known = {field.name for field in dataclasses.fields(section)}
-            for key, value in values.items():
-                if key in LEGACY_KNOBS.get(section_name, ()):
-                    continue
-                if key not in known:
-                    raise ValueError(f"unknown config knob: {section_name}.{key}")
-                setattr(section, key, value)
+            _load_section(section, values, section_name)
         config.validate_index()
         return config
 
@@ -239,8 +248,37 @@ def _render_toml(config: Config) -> str:
     lines: list[str] = []
     for section_field in dataclasses.fields(config):
         section = getattr(config, section_field.name)
-        lines.append(f"[{section_field.name}]")
-        for knob in dataclasses.fields(section):
-            lines.append(f"{knob.name} = {_render_value(getattr(section, knob.name))}")
-        lines.append("")
+        _render_section(lines, section_field.name, section)
     return "\n".join(lines)
+
+
+def _load_section(section: Any, values: object, path: str) -> None:
+    if not isinstance(values, dict):
+        raise ValueError(f"config section must be a table: {path}")
+    known = {field.name for field in dataclasses.fields(section)}
+    for key, value in values.items():
+        if key in LEGACY_KNOBS.get(path, ()):
+            continue
+        if key not in known:
+            raise ValueError(f"unknown config knob: {path}.{key}")
+        current = getattr(section, key)
+        if dataclasses.is_dataclass(current):
+            _load_section(current, value, f"{path}.{key}")
+        elif isinstance(value, dict) and not isinstance(current, dict):
+            raise ValueError(f"config knob must not be a table: {path}.{key}")
+        else:
+            setattr(section, key, value)
+
+
+def _render_section(lines: list[str], path: str, section: Any) -> None:
+    lines.append(f"[{path}]")
+    children: list[tuple[str, object]] = []
+    for knob in dataclasses.fields(section):
+        value = getattr(section, knob.name)
+        if dataclasses.is_dataclass(value):
+            children.append((knob.name, value))
+        else:
+            lines.append(f"{knob.name} = {_render_value(value)}")
+    lines.append("")
+    for name, child in children:
+        _render_section(lines, f"{path}.{name}", child)

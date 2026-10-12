@@ -107,6 +107,11 @@ def test_a_host_reasoner_is_named_by_dialect_and_runs_that_dialect_s_binary():
     assert reasoner.host.spec.model == BINARIES[HOST_CLAUDE_CODE][1]
 
 
+def test_an_unknown_host_reasoner_fails_closed_instead_of_using_another_dialect():
+    with pytest.raises(ReasonerUnavailableError, match="unsupported host reasoner"):
+        HostReasoner.for_host("not-a-host")
+
+
 def test_a_host_reasoner_marks_its_session_as_the_executor_so_hooks_stand_down():
     from agent_memory.core.config import EXECUTOR_ENV_VAR
 

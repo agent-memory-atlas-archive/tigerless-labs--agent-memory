@@ -47,15 +47,23 @@ class HostReasoner:
             environment={EXECUTOR_ENV_VAR: "1"},
         )
         if not result.ok:
-            raise ReasonerUnavailableError("host reasoner failed; run mem doctor for this host")
+            name = getattr(self.host, "name", "configured host")
+            raise ReasonerUnavailableError(
+                f"host reasoner failed for {name}; run mem doctor --host {name}"
+            )
         if not result.text.strip():
-            raise ReasonerUnavailableError("host reasoner returned an empty response")
+            name = getattr(self.host, "name", "configured host")
+            raise ReasonerUnavailableError(
+                f"host reasoner returned an empty response for {name}"
+            )
         return result.text
 
     @classmethod
     def for_host(cls, name: str, model: str = EMPTY) -> HostReasoner:
         """A host is named by its dialect, not by its binary — `claude-code` runs `claude`."""
-        binary, default_model = BINARIES.get(name, (name, EMPTY))
+        if name not in BINARIES:
+            raise ReasonerUnavailableError(f"unsupported host reasoner {name!r}")
+        binary, default_model = BINARIES[name]
         bundled = os.environ.get(CLAUDE_BUNDLED_ENV, EMPTY)
         if name == HOST_CLAUDE_CODE and bundled and shutil.which(binary) is None:
             binary = bundled

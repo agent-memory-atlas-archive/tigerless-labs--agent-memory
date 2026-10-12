@@ -9,10 +9,12 @@ import subprocess
 import pytest
 from agent_memory.adapters import doctor, host_setup, moments, openrouter, setup
 from agent_memory.core import prompts
+from agent_memory.core.config import OperationExecutorConfig
 from agent_memory.core.errors import ValidationError
 from agent_memory.core.store import Store
 
 HOSTS = (moments.HOST_CLAUDE_CODE, moments.HOST_CODEX, moments.HOST_MUSE_CODE)
+LIVE_REASONER_CHECK = doctor._live_reasoner_check
 
 
 @pytest.fixture(autouse=True)
@@ -21,8 +23,10 @@ def _stub_live_host_reasoner(monkeypatch):
     monkeypatch.setattr(
         doctor,
         "_live_reasoner_check",
-        lambda _store, _host: doctor.Check(
-            "REASONER_LIVE_OK", True, "fixture host reasoner completed"
+        lambda _store, _host, operation: doctor.Check(
+            f"{operation.upper()}_REASONER_LIVE_OK",
+            True,
+            f"{operation} fixture reasoner completed",
         ),
     )
 
@@ -310,15 +314,17 @@ def test_host_reasoner_failure_prevents_ready(tmp_path, monkeypatch):
     monkeypatch.setattr(
         doctor,
         "_live_reasoner_check",
-        lambda _store, _host: doctor.Check(
-            "REASONER_UNAVAILABLE", False, "live reasoner returned no READY"
+        lambda _store, _host, operation: doctor.Check(
+            f"{operation.upper()}_REASONER_UNAVAILABLE",
+            False,
+            f"{operation} live reasoner returned no READY",
         ),
     )
 
     result = host_setup.run(store, moments.HOST_CODEX, settings_path=target)
 
     assert result["status"] == doctor.FAILED
-    assert "REASONER_UNAVAILABLE" in {
+    assert "WRITE_REASONER_UNAVAILABLE" in {
         check["code"] for check in result["checks"]
     }
 
@@ -329,7 +335,7 @@ def test_doctor_accepts_an_explicit_user_vertex_project_without_a_custom_endpoin
 
     check = doctor._reasoner_checks(store, moments.HOST_CODEX)[0]
 
-    assert check.code == "REASONER_AVAILABLE"
+    assert check.code == "WRITE_REASONER_AVAILABLE"
     assert check.ok
     assert check.detail == "Vertex AI project user-project"
 
@@ -341,7 +347,7 @@ def test_doctor_rejects_endpoint_opt_in_without_user_configuration(store):
 
     check = doctor._reasoner_checks(store, moments.HOST_CODEX)[0]
 
-    assert check.code == "REASONER_UNAVAILABLE"
+    assert check.code == "WRITE_REASONER_UNAVAILABLE"
     assert not check.ok
     assert "project" in check.detail
 
@@ -355,8 +361,63 @@ def test_doctor_accepts_user_owned_vertex_configuration_from_the_environment(sto
         {"GOOGLE_CLOUD_PROJECT": "environment-project", "VERTEX_LOCATION": "global"},
     )[0]
 
-    assert check.code == "REASONER_AVAILABLE"
+    assert check.code == "WRITE_REASONER_AVAILABLE"
     assert check.detail == "Vertex AI project environment-project"
+
+
+def test_doctor_attributes_independent_reasoner_availability_to_each_channel(
+    store, monkeypatch
+):
+    store.config.executor.write = OperationExecutorConfig(reasoner="host", host="muse-code")
+    store.config.executor.manage = OperationExecutorConfig(
+        reasoner="endpoint", endpoint="https://manage.example/v1"
+    )
+    monkeypatch.setattr(
+        "agent_memory.executor.hosts.shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary == "muse" else None,
+    )
+
+    checks = doctor._reasoner_checks(
+        store,
+        moments.HOST_CODEX,
+        {"GEMINI_API_KEY": "user-key"},
+    )
+
+    assert [(check.code, check.ok) for check in checks] == [
+        ("WRITE_REASONER_AVAILABLE", True),
+        ("MANAGE_REASONER_AVAILABLE", True),
+    ]
+    assert "muse-code" in checks[0].detail
+    assert "explicit model endpoint" in checks[1].detail
+
+
+def test_live_preflight_uses_the_resolved_host_for_each_channel(store, monkeypatch):
+    store.config.executor.write = OperationExecutorConfig(reasoner="host", host="muse-code")
+    store.config.executor.manage = OperationExecutorConfig(reasoner="host", host="codex")
+    called = []
+
+    class Ready:
+        def __init__(self, configured):
+            self.host = type(
+                "ConfiguredHost",
+                (),
+                {"spec": type("Spec", (), {"name": configured.host})()},
+            )()
+
+        def __call__(self, _prompt):
+            called.append(self.host.spec.name)
+            return "AGENT_MEMORY_READY"
+
+    monkeypatch.setattr(
+        "agent_memory.executor.distiller.distiller", lambda configured: Ready(configured)
+    )
+
+    write = LIVE_REASONER_CHECK(store, moments.HOST_CODEX, "write")
+    manage = LIVE_REASONER_CHECK(store, moments.HOST_CODEX, "manage")
+
+    assert write.code == "WRITE_REASONER_LIVE_OK"
+    assert manage.code == "MANAGE_REASONER_LIVE_OK"
+    assert called == ["muse-code", "codex"]
 
 
 def test_codex_doctor_flags_disabled_hooks_read_only_sandbox_and_store_failure(

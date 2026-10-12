@@ -225,11 +225,33 @@ Codex keeps its normal MCP approval boundary; the first tool call can still requ
 user approval even after setup has configured and verified the server.
 
 SessionStart injects, Stop and SessionEnd distil where supported, and PreCompact evicts.
-Distillation reasons through the host that fired the boundary, using its existing login. Point
-`[executor]` in Store `config.toml` at a model endpoint instead to use an endpoint reasoner.
-Endpoint use is opt-in and never carries a Tigerless project or credential. A failed host,
-credential, request, or endpoint response is reported and leaves the archived backlog eligible
-for retry. Detached boundary failures are recorded in the Store's `.state/hooks.log`.
+By default, Write reasons through the host that produced the source session while Manage uses
+the Store's legacy `[executor]` policy. They can be configured independently without changing
+which source session is archived or cited:
+
+```toml
+[executor.write]
+reasoner = "host"
+host = "muse-code" # or "source", "codex", or "claude-code"
+
+[executor.manage]
+reasoner = "host"
+host = "codex"
+```
+
+For `mem distill` and `mem sleep`, `--reason`, `--reason-host`, and `--reason-model` override the
+corresponding operation policy. Operation policy overrides legacy `[executor]` values. Hooks pass
+the producing host only as `--source-host`, so it supplies the default or resolves `host =
+"source"` but never replaces an explicit Write host. A headless reasoner carries an executor
+marker that prevents recursive capture.
+
+Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
+usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's
+table. Unset operation values inherit the legacy `[executor]` value, preserving existing Store
+configuration. Endpoint use is opt-in and never carries a Tigerless project or credential. A
+failed selected host, credential, request, or endpoint response never switches transport; Write
+leaves the original archived backlog eligible for retry. Detached boundary failures are recorded
+in the Store's `.state/hooks.log`.
 
 To use Vertex AI, enable it in a Google Cloud project you control, grant the calling identity
 prediction access, authenticate the `gcloud` CLI, and configure that project explicitly:
@@ -241,6 +263,11 @@ project = "your-google-cloud-project"
 location = "global"
 model = "google/gemini-3.7-flash"
 ```
+
+The legacy form above continues to apply to both operations unless an operation table overrides
+it. Put the same endpoint fields under `[executor.write]` or `[executor.manage]` to scope them.
+`mem setup` and `mem doctor` report configuration and live-preflight results separately as Write
+and Manage reasoner checks.
 
 `GOOGLE_CLOUD_PROJECT` and `VERTEX_LOCATION` override the Store values. Alternatively, an
 OpenAI-compatible endpoint can be selected with `endpoint` and a `GEMINI_API_KEY` supplied in
