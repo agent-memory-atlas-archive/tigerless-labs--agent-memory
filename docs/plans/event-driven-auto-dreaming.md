@@ -8,8 +8,7 @@ truth writes, optimistic correction checks, Dream reports, and the decision ledg
 automatic Manage trigger. Fresh Host setup also leaves the manual Manage default on Claude Code
 after Codex or Muse setup.
 
-This experiment stays independent of an optional resident Backend. It adds no server, listener,
-scheduler thread, or daemon.
+This implementation adds no server, listener, scheduler thread, or daemon.
 
 ## Decisions
 
@@ -44,5 +43,4 @@ A caught worker error is failed immediately. An uncatchable exit remains running
 the next event reclaims it after confirming that no worker owns the run lock. A report written
 before a state-update crash proves completion. A crash before that report may leave reversible,
 individually atomic Manage changes; retry reconciles current Store truth and never bypasses Store
-validation or optimistic checks. A full persistent job queue and supervisor remain outside this
-no-Backend experiment.
+validation or optimistic checks. A full persistent job queue and supervisor are not provided.
