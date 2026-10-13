@@ -241,6 +241,31 @@ def _parser() -> argparse.ArgumentParser:
     sleeper.add_argument("--reason-model", default="")
     sleeper.set_defaults(handler=_sleep)
 
+    cron = subparsers.add_parser("cron", help="manage an opt-in due-aware Dream crontab entry")
+    cron_actions = cron.add_subparsers(dest="cron_action", required=True)
+    cron_install = cron_actions.add_parser("install", help="install or update this Store's entry")
+    cron_install.add_argument(
+        "--interval-minutes",
+        type=int,
+        default=60,
+        help="wake-up interval that evenly divides an hour (default: 60)",
+    )
+    cron_install.add_argument(
+        "--mem-path",
+        default=None,
+        help="absolute path to the mem executable (auto-detected by default)",
+    )
+    cron_install.add_argument(
+        "--log",
+        default=None,
+        help="append stdout/stderr here (default: STORE/.state/cron.log)",
+    )
+    cron_install.set_defaults(handler=_cron)
+    cron_status = cron_actions.add_parser("status", help="show this Store's entry and scheduler")
+    cron_status.set_defaults(handler=_cron)
+    cron_remove = cron_actions.add_parser("remove", help="remove only this Store's managed entry")
+    cron_remove.set_defaults(handler=_cron)
+
     proposer = subparsers.add_parser("proposals", help="list proposals awaiting confirmation")
     proposer.set_defaults(handler=_proposals)
 
@@ -589,6 +614,21 @@ def _sleep(store: Store, args: argparse.Namespace) -> dict[str, object]:
         report = manage.sleep(reasoner=_reasoner(store, args, selection.MANAGE))
     dreaming.record_manual_success(store, report.path)
     return {"slept": True, **report.as_dict()}
+
+
+def _cron(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    from agent_memory.adapters import cron_schedule
+
+    if args.cron_action == "install":
+        return cron_schedule.install(
+            store,
+            interval_minutes=args.interval_minutes,
+            mem_path=args.mem_path,
+            log_path=args.log,
+        )
+    if args.cron_action == "status":
+        return cron_schedule.status(store)
+    return cron_schedule.remove(store)
 
 
 def _reasoner(

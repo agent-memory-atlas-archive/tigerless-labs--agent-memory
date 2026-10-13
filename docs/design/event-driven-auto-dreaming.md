@@ -33,10 +33,14 @@ persisted settled sessions -> Manage.due() -> atomic claim -> run_worker()
 
 `mem sleep` remains an unconditional manual run. `mem sleep --if-due --trigger-source cron` is the
 safe optional scheduler entry: it computes progress from watermarks and pending state, returns a
-normal skipped result when not due, and shares claim/lease recovery with Hooks. Default setup does
-not install a cron job or timer.
+normal skipped result when not due, and shares claim/lease recovery with Hooks. `mem cron
+install/status/remove` manages one Store-scoped block in the user's crontab; the block only invokes
+that existing scheduler entry. It captures absolute Store and executable paths plus the non-secret
+`HOME` and `PATH` needed by configured Host reasoners. Default setup does not install it.
 
-There is no timer, listener, supervisor, or resident process. With no Host activity, elapsed-time
-eligibility remains dormant. The next lifecycle event checks it. Operators that require wall-clock
-scheduling must provide an external scheduler; that is an optional integration, not an installed
-Memory runtime.
+There is no Memory timer, listener, supervisor, or resident process. Without an external cron
+entry, elapsed-time eligibility remains dormant while Hosts are inactive and the next lifecycle
+event checks it. With an explicitly installed entry, the operating system can wake the same CLI
+path on wall-clock time. The interval controls checks, not Dream frequency; Manage still enforces
+both thresholds. Claim and maintenance locks make Hook/cron races no different from duplicate Hook
+events.

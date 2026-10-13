@@ -264,25 +264,42 @@ lifecycle event retries failed or stale work. Manual `mem sleep` remains availab
 runs when explicitly requested.
 
 Automatic Dreaming is enabled by `manage.auto_dream` and can be rolled back by setting it to
-`false`. `manage.claim_lease_seconds` controls crash-recovery eligibility. There is no installed
-timer or resident Memory process: if every Host is inactive when the time threshold passes, work
-runs only after the next SessionStart or boundary event. Wall-clock execution requires an explicit
-external cron or systemd timer and is not part of default setup.
+`false`. `manage.claim_lease_seconds` controls crash-recovery eligibility. Default setup installs
+no timer or resident Memory process: if every Host is inactive when the time threshold passes,
+work runs only after the next SessionStart or boundary event. An explicitly installed user cron
+entry can provide an independent wall-clock wake-up.
 
 An external scheduler can supply that optional wake-up without running a Memory Backend. The
 due-aware command derives new completed sessions and elapsed time from Store state; it does not
 accept a caller-provided session count:
 
 ```bash
-mem --json sleep --if-due --trigger-source cron
+# Install the default hourly check for one initialized Store.
+mem --store /absolute/path/to/store --json cron install \
+  --mem-path /absolute/path/to/mem
 
-# Example crontab entry; use the absolute paths for your installation and Store.
-15 * * * * AGENT_MEMORY_STORE=/absolute/path/to/store /absolute/path/to/mem --json sleep --if-due --trigger-source cron
+# Or check every 15 minutes. Repeating install updates the same Store entry.
+mem --store /absolute/path/to/store --json cron install \
+  --interval-minutes 15 --mem-path /absolute/path/to/mem
+
+# Inspect the managed entry and whether cron is running, then remove only this Store's entry.
+mem --store /absolute/path/to/store --json cron status
+mem --store /absolute/path/to/store --json cron remove
 ```
+
+The installer writes one Store-identified block to the current user's crontab and preserves all
+unrelated entries. It records absolute Store and `mem` paths, `HOME`, and `PATH`, quotes spaces and
+cron-special percent characters, and appends output to `STORE/.state/cron.log` by default. It does
+not copy secrets into the crontab: Codex and Muse should use their normal files under `HOME`; an
+environment-only endpoint credential must be made available to cron separately. On WSL, status
+warns when the distribution's cron service is not running. Unsupported systems report that
+`crontab` is unavailable instead of pretending scheduling is active.
 
 A not-due invocation returns `status: skipped` and creates no report. Hook and cron triggers share
 the Store claim/lease, maintenance locks, reasoner selection, and `Manage.sleep()` runner, so a
-concurrent wake-up can produce only one effective Dream.
+concurrent wake-up can produce only one effective Dream. The check interval is only a wake-up
+frequency: a Dream still requires the configured elapsed-time and completed-session thresholds.
+Installing, updating, or removing cron never disables lifecycle Hook triggering.
 
 To use Vertex AI, enable it in a Google Cloud project you control, grant the calling identity
 prediction access, authenticate the `gcloud` CLI, and configure that project explicitly:

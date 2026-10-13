@@ -26,12 +26,16 @@ This implementation adds no server, listener, scheduler thread, or daemon.
 7. Use the claiming lifecycle Host for automatic Manage. On a fresh Host-backed Store, seed the
    otherwise empty manual Manage policy from the first successful Host setup.
 8. Keep manual sleep and expose automatic status through the CLI.
+9. Offer an opt-in, Store-scoped user crontab entry that only wakes the same due-aware CLI path;
+   never install it from setup or add a Memory-owned scheduler.
 
 ## Verification
 
 - Unit: due rules, distinct sessions, pending Write delay, Host affinity, launch shape, failure,
   lease recovery, report recovery, manual baseline, duplicate Hook behavior, and setup defaults.
-- Cross-process: simultaneous Host claims and duplicate workers.
+- Cross-process: simultaneous Host/cron claims and duplicate workers.
+- Cron: idempotent Store-scoped install, status, update, and removal while preserving unrelated
+  crontab entries; explicit WSL scheduler diagnostics.
 - Regression: full unit, system, red-team, lint, and type checks.
 - Live: isolated HOME, Store, project, and logs; real Codex lifecycle Write/Read; automatic Manage
   with a real model decision; process exit and no listening port; delayed elapsed-time eligibility
