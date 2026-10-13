@@ -36,6 +36,9 @@ class DreamClaim:
     host: str
     sessions: tuple[str, ...]
     attempt: int
+    trigger_source: str = ""
+    reasoner: str = ""
+    model: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -43,6 +46,7 @@ class ClaimResult:
     claim: DreamClaim | None
     reason: str
     sessions_since: int = 0
+    due: bool = False
 
 
 def completed_sessions(store: Store) -> dict[str, Mark]:
@@ -65,7 +69,14 @@ def write_is_settled(store: Store) -> bool:
     return all(watermark.read(session).backlog() == 0 for session in watermark.sessions())
 
 
-def claim_due(store: Store, host: str) -> ClaimResult:
+def claim_due(
+    store: Store,
+    host: str,
+    *,
+    trigger_source: str = "hook",
+    reasoner: str = "host",
+    model: str = "",
+) -> ClaimResult:
     """Atomically claim one due Dream, or explain why no worker should be launched."""
     if not store.config.manage.auto_dream:
         return ClaimResult(None, "automatic dreaming disabled")
@@ -81,11 +92,11 @@ def claim_due(store: Store, host: str) -> ClaimResult:
             expires = _instant(state.get("lease_expires_at"))
             if expires is not None and now < expires:
                 _save(store, state)
-                return ClaimResult(None, "dream claim active")
+                return ClaimResult(None, "dream claim active", due=True)
             if lock_is_held(store.layout.dream_run_lock):
                 state["lease_expires_at"] = _lease_until(store, now)
                 _save(store, state)
-                return ClaimResult(None, "dream worker still running")
+                return ClaimResult(None, "dream worker still running", due=True)
             state["status"] = STATUS_FAILED
             state["last_error"] = "claim lease expired before completion"
 
@@ -116,6 +127,9 @@ def claim_due(store: Store, host: str) -> ClaimResult:
                 "status": STATUS_RUNNING,
                 "claim_id": claim_id,
                 "host": host,
+                "trigger_source": trigger_source,
+                "reasoner": reasoner,
+                "model": model,
                 "sessions": list(sessions),
                 "attempt": attempt,
                 "claimed_at": now.isoformat(),
@@ -124,7 +138,20 @@ def claim_due(store: Store, host: str) -> ClaimResult:
             }
         )
         _save(store, state)
-        return ClaimResult(DreamClaim(claim_id, host, sessions, attempt), "claimed", len(sessions))
+        return ClaimResult(
+            DreamClaim(
+                claim_id,
+                host,
+                sessions,
+                attempt,
+                trigger_source=trigger_source,
+                reasoner=reasoner,
+                model=model,
+            ),
+            "claimed",
+            len(sessions),
+            due=True,
+        )
 
 
 def current_claim(store: Store, claim_id: str) -> DreamClaim | None:
@@ -141,6 +168,9 @@ def current_claim(store: Store, claim_id: str) -> DreamClaim | None:
             host=str(state.get("host") or ""),
             sessions=tuple(_strings(state.get("sessions"))),
             attempt=_integer(state.get("attempt"), 1),
+            trigger_source=str(state.get("trigger_source") or ""),
+            reasoner=str(state.get("reasoner") or ""),
+            model=str(state.get("model") or ""),
         )
 
 
@@ -200,6 +230,9 @@ def record_manual_success(store: Store, report: str) -> None:
                 "status": STATUS_SUCCEEDED,
                 "claim_id": "",
                 "host": "manual",
+                "trigger_source": "manual",
+                "reasoner": "",
+                "model": "",
                 "sessions": [],
                 "covered_sessions": sorted(completed_sessions(store)),
                 "last_completed_at": store.clock.now().isoformat(),
@@ -271,6 +304,9 @@ def _empty() -> dict[str, object]:
         "status": STATUS_IDLE,
         "claim_id": "",
         "host": "",
+        "trigger_source": "",
+        "reasoner": "",
+        "model": "",
         "sessions": [],
         "attempt": 0,
         "claimed_at": "",

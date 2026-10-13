@@ -13,7 +13,7 @@ from agent_memory.core import context as context_module
 from agent_memory.core import distill as distill_module
 from agent_memory.core import dreaming, pending, portability, prompts, reasoning, sessions, triggers
 from agent_memory.core import migrate as migrate_module
-from agent_memory.core.config import REASONER_ENDPOINT, REASONER_HOST
+from agent_memory.core.config import REASONER_ENDPOINT, REASONER_HOST, ExecutorConfig
 from agent_memory.core.errors import FieldError, MemoryStoreError, ValidationError
 from agent_memory.core.locking import file_lock
 from agent_memory.core.manage import Manage
@@ -171,9 +171,10 @@ def _parser() -> argparse.ArgumentParser:
 
     dreamer = subparsers.add_parser("dream-worker", help=argparse.SUPPRESS)
     dreamer.add_argument("--claim", required=True)
-    dreamer.add_argument("--reason-host", required=True)
+    dreamer.add_argument("--reason", choices=(REASON_HOST, REASON_ENDPOINT), default=None)
+    dreamer.add_argument("--reason-host", default=None)
     dreamer.add_argument("--reason-model", default="")
-    dreamer.set_defaults(handler=_dream_worker, reason=REASON_HOST)
+    dreamer.set_defaults(handler=_dream_worker)
 
     tracer = subparsers.add_parser("trace", help="open the messages a memory cites")
     tracer.add_argument("name")
@@ -216,7 +217,19 @@ def _parser() -> argparse.ArgumentParser:
     importer.set_defaults(handler=_import)
 
     sleeper = subparsers.add_parser("sleep", help="run the sleep-time Manage pass")
-    sleeper.add_argument("--sessions-since", type=int, default=None)
+    sleep_due = sleeper.add_mutually_exclusive_group()
+    sleep_due.add_argument("--sessions-since", type=int, default=None)
+    sleep_due.add_argument(
+        "--if-due",
+        action="store_true",
+        help="run only when persisted, settled session progress satisfies Manage.due()",
+    )
+    sleeper.add_argument(
+        "--trigger-source",
+        choices=("cli", "cron"),
+        default="cli",
+        help="diagnostic source for --if-due (default: cli)",
+    )
     sleeper.add_argument(
         "--reason",
         choices=(REASON_HOST, REASON_ENDPOINT, REASON_NONE),
@@ -427,15 +440,22 @@ def _distill(store: Store, args: argparse.Namespace) -> dict[str, object]:
     if args.auto_dream:
         from agent_memory.adapters import auto_dream
 
-        scheduled = auto_dream.launch(
-            store,
-            args.source_host or args.reason_host or store.config.executor.host,
-        )
+        scheduled = auto_dream.launch(store, trigger_source="hook")
         payload["auto_dream"] = {
             "launched": scheduled.claim is not None,
+            "due": scheduled.due,
+            "trigger_source": "hook",
             "reason": scheduled.reason,
             "sessions_since": scheduled.sessions_since,
-            **({"claim": scheduled.claim.id} if scheduled.claim else {}),
+            **(
+                {
+                    "claim": scheduled.claim.id,
+                    "reasoner": scheduled.claim.reasoner,
+                    "host": scheduled.claim.host,
+                }
+                if scheduled.claim
+                else {}
+            ),
         }
     return payload
 
@@ -443,7 +463,12 @@ def _distill(store: Store, args: argparse.Namespace) -> dict[str, object]:
 def _dream_worker(store: Store, args: argparse.Namespace) -> dict[str, object]:
     from agent_memory.adapters import auto_dream
 
-    return auto_dream.run_worker(store, args.claim, _reasoner(store, args, selection.MANAGE))
+    try:
+        reasoner = _reasoner(store, args, selection.MANAGE)
+    except Exception as error:
+        dreaming.mark_failed(store, args.claim, f"{type(error).__name__}: {error}")
+        raise
+    return auto_dream.run_worker(store, args.claim, reasoner)
 
 
 def _archived_sessions(store: Store) -> list[str]:
@@ -535,6 +560,26 @@ def _import(store: Store, args: argparse.Namespace) -> dict[str, object]:
 
 def _sleep(store: Store, args: argparse.Namespace) -> dict[str, object]:
     manage = Manage(store)
+    if args.if_due:
+        from agent_memory.adapters import auto_dream
+
+        if args.reason == REASON_NONE:
+            return auto_dream.run_due(
+                store,
+                None,
+                reasoner_kind=REASON_NONE,
+                trigger_source=args.trigger_source,
+            )
+        executor = _executor(store, args, selection.MANAGE)
+        model = executor.host_model if executor.reasoner == REASON_HOST else executor.model
+        return auto_dream.run_due(
+            store,
+            distiller.distiller(executor),
+            reasoner_kind=executor.reasoner,
+            host=executor.host if executor.reasoner == REASON_HOST else "",
+            model=model,
+            trigger_source=args.trigger_source,
+        )
     if args.sessions_since is not None and not manage.due(args.sessions_since):
         return {"slept": False, "reason": "trigger conditions not met"}
     with (
@@ -555,7 +600,17 @@ def _reasoner(
 ) -> Reasoner | None:
     if args.reason == REASON_NONE:
         return None
-    executor = selection.resolve(
+    return distiller.distiller(_executor(store, args, operation, source_host=source_host))
+
+
+def _executor(
+    store: Store,
+    args: argparse.Namespace,
+    operation: str,
+    *,
+    source_host: str = "",
+) -> ExecutorConfig:
+    return selection.resolve(
         store.config.executor,
         operation,
         source_host=source_host,
@@ -563,7 +618,6 @@ def _reasoner(
         host=args.reason_host or "",
         model=args.reason_model,
     )
-    return distiller.distiller(executor)
 
 
 def _gc(store: Store, args: argparse.Namespace) -> dict[str, object]:

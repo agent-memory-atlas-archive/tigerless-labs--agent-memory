@@ -24,6 +24,17 @@ def _work(root: str, claim_id: str, output) -> None:
     output.put(bool(result["dreamed"]))
 
 
+def _run_due(root: str, trigger_source: str, ready, output) -> None:
+    ready.wait()
+    result = auto_dream.run_due(
+        Store(root),
+        None,
+        reasoner_kind="none",
+        trigger_source=trigger_source,
+    )
+    output.put((trigger_source, bool(result["slept"]), str(result["status"])))
+
+
 def _crash_after_owning_run_lock(root: str, claim_id: str, ready) -> None:
     store = Store(root)
     with file_lock(store.layout.dream_run_lock, timeout=None):
@@ -81,6 +92,32 @@ def test_duplicate_workers_execute_one_claim_once_and_exit(tmp_path):
     assert [output.get(timeout=2) for _ in workers] == [True, True]
     assert len(list(store.layout.dream_reports.glob(f"auto-{claim.id}.md"))) == 1
     assert dreaming.state(store)["status"] == dreaming.STATUS_SUCCEEDED
+
+
+def test_hook_and_cron_due_runners_execute_manage_once(tmp_path):
+    store = Store(tmp_path / "store")
+    store.init()
+    for number in range(store.config.manage.trigger_min_sessions):
+        _complete(store, f"session-{number}")
+    context = mp.get_context("spawn")
+    ready = context.Event()
+    output = context.Queue()
+    workers = [
+        context.Process(target=_run_due, args=(str(store.root), source, ready, output))
+        for source in ("hook", "cron")
+    ]
+    for worker in workers:
+        worker.start()
+    ready.set()
+    for worker in workers:
+        worker.join(10)
+        assert worker.exitcode == 0
+
+    results = [output.get(timeout=2) for _ in workers]
+    assert len([result for result in results if result[1]]) == 1
+    assert {result[2] for result in results} == {"skipped", "succeeded"}
+    assert len(list(store.layout.dream_reports.glob("auto-*.md"))) == 1
+    assert dreaming.state(store)["trigger_source"] in {"hook", "cron"}
 
 
 def test_abnormally_exited_worker_releases_lock_and_next_event_reclaims(tmp_path):

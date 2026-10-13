@@ -172,10 +172,10 @@ def _boundary(
     }
 
 
-def _launch_dream(store: Store, host: str) -> object:
+def _launch_dream(store: Store, _host: str) -> object:
     from . import auto_dream
 
-    return auto_dream.launch(store, host)
+    return auto_dream.launch(store, trigger_source="hook")
 
 
 def launch_distill(store: Store, session: str, host: str) -> bool:

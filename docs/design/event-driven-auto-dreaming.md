@@ -11,16 +11,30 @@ the configured session threshold. Later Dreams require both the configured elaps
 session thresholds. Manage waits while any captured Write remains unsettled.
 
 Claims are Store-local persistent state. A claim binds a stable decision identity, the covered
-session set, the triggering Host, an attempt, and a lease. Store-local advisory locks serialize
-claiming and execution; Distillation and Manage share a maintenance gate. A completed report is
-the success fence, so recovery after a state-write crash does not repeat Manage. A missing report
-after a failed process remains retryable when the lease expires and another lifecycle event
-arrives.
+session set, trigger source, actual Manage reasoner, attempt, and lease. Store-local advisory locks
+serialize claiming and execution; Distillation and Manage share a maintenance gate. A completed
+report is the success fence, so recovery after a state-write crash does not repeat Manage. A
+missing report after a failed process remains retryable when the lease expires and another
+lifecycle event arrives.
 
-The lifecycle Host that first claims due work supplies the headless reasoner. This keeps Codex,
-Claude Code, and Muse on their existing login and avoids endpoint fallback. On a fresh
-Host-backed Store, the first successful Host setup supplies the default manual Manage policy;
-explicit operation policies and legacy endpoint configuration are preserved.
+The configured Manage policy supplies the reasoner; the lifecycle Host remains only the Write
+source and trigger opportunity. This keeps an explicit Codex, Muse, or endpoint selection stable
+across shared-Store Hosts and never falls back to another transport. On a fresh Host-backed Store,
+the first successful Host setup supplies the default Manage policy; explicit operation policies
+and legacy endpoint configuration are preserved.
+
+Both a detached Hook worker and `mem sleep --if-due` enter the same path:
+
+```text
+persisted settled sessions -> Manage.due() -> atomic claim -> run_worker()
+  -> Manage.sleep() -> T0 actions -> T1 proposals/judgements
+  -> Store mutations -> decision ledger -> Dream Report -> success state
+```
+
+`mem sleep` remains an unconditional manual run. `mem sleep --if-due --trigger-source cron` is the
+safe optional scheduler entry: it computes progress from watermarks and pending state, returns a
+normal skipped result when not due, and shares claim/lease recovery with Hooks. Default setup does
+not install a cron job or timer.
 
 There is no timer, listener, supervisor, or resident process. With no Host activity, elapsed-time
 eligibility remains dormant. The next lifecycle event checks it. Operators that require wall-clock
