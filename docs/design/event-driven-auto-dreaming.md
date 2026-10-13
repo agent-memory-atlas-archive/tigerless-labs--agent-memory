@@ -36,7 +36,9 @@ safe optional scheduler entry: it computes progress from watermarks and pending 
 normal skipped result when not due, and shares claim/lease recovery with Hooks. `mem cron
 install/status/remove` manages one Store-scoped block in the user's crontab; the block only invokes
 that existing scheduler entry. It captures absolute Store and executable paths plus the non-secret
-`HOME` and `PATH` needed by configured Host reasoners. Default setup does not install it.
+`HOME` and `PATH` needed by configured Host reasoners. A private, explicit `--env-file` can supply
+environment-only transport settings without copying their contents into crontab diagnostics.
+Default setup does not install it.
 
 There is no Memory timer, listener, supervisor, or resident process. Without an external cron
 entry, elapsed-time eligibility remains dormant while Hosts are inactive and the next lifecycle

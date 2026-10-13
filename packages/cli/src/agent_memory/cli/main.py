@@ -260,6 +260,11 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="append stdout/stderr here (default: STORE/.state/cron.log)",
     )
+    cron_install.add_argument(
+        "--env-file",
+        default=None,
+        help="source a mode-600 environment file before running mem",
+    )
     cron_install.set_defaults(handler=_cron)
     cron_status = cron_actions.add_parser("status", help="show this Store's entry and scheduler")
     cron_status.set_defaults(handler=_cron)
@@ -625,6 +630,7 @@ def _cron(store: Store, args: argparse.Namespace) -> dict[str, object]:
             interval_minutes=args.interval_minutes,
             mem_path=args.mem_path,
             log_path=args.log,
+            env_file=args.env_file,
         )
     if args.cron_action == "status":
         return cron_schedule.status(store)

@@ -37,6 +37,9 @@ def test_cli_manages_one_store_block_and_preserves_unrelated_jobs(tmp_path, monk
     mem = bin_dir / "mem"
     mem.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     mem.chmod(0o755)
+    environment = tmp_path / "reasoner.env"
+    environment.write_text("HTTPS_PROXY=https://example.test\n", encoding="utf-8")
+    environment.chmod(0o600)
     monkeypatch.setenv("FAKE_CRONTAB_FILE", str(crontab_file))
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
     monkeypatch.setattr(
@@ -50,8 +53,24 @@ def test_cli_manages_one_store_block_and_preserves_unrelated_jobs(tmp_path, monk
 
     assert main(["--store", str(store), "--json", "init"]) == EXIT_OK
     capsys.readouterr()
-    installed = run("install", "--interval-minutes", "15", "--mem-path", str(mem))
-    unchanged = run("install", "--interval-minutes", "15", "--mem-path", str(mem))
+    installed = run(
+        "install",
+        "--interval-minutes",
+        "15",
+        "--mem-path",
+        str(mem),
+        "--env-file",
+        str(environment),
+    )
+    unchanged = run(
+        "install",
+        "--interval-minutes",
+        "15",
+        "--mem-path",
+        str(mem),
+        "--env-file",
+        str(environment),
+    )
     current = run("status")
     removed = run("remove")
 
@@ -60,5 +79,6 @@ def test_cli_manages_one_store_block_and_preserves_unrelated_jobs(tmp_path, monk
     assert current["installed"] is True
     assert current["entry"].startswith("*/15 * * * * ")
     assert "--json sleep --if-due --trigger-source cron" in current["entry"]
+    assert str(environment) in current["entry"]
     assert removed["status"] == "removed"
     assert crontab_file.read_text("utf-8") == "11 2 * * * /usr/bin/unrelated\n"

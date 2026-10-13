@@ -26,6 +26,7 @@ def install(
     interval_minutes: int = DEFAULT_INTERVAL_MINUTES,
     mem_path: str | None = None,
     log_path: str | None = None,
+    env_file: str | None = None,
 ) -> dict[str, object]:
     """Install or replace this Store's one managed crontab block."""
     if not (store.root / "config.toml").is_file():
@@ -36,21 +37,23 @@ def install(
     interval = _validate_interval(interval_minutes)
     executable = _resolve_mem(mem_path)
     log = _resolve_log(store, log_path)
+    environment = _resolve_env_file(env_file)
     home = _required_environment("HOME")
     path = os.environ.get("PATH") or os.defpath
     _validate_value("PATH", path)
 
     schedule = _schedule(interval)
-    command = " ".join(
-        (
-            f"HOME={_quote(home)}",
-            f"PATH={_quote(path)}",
-            f"{STORE_ENV_VAR}={_quote(str(store.root))}",
-            _quote(str(executable)),
-            "--json sleep --if-due --trigger-source cron",
-            f">> {_quote(str(log))} 2>&1",
-        )
+    prefix = (
+        f"HOME={_quote(home)}",
+        f"PATH={_quote(path)}",
+        f"{STORE_ENV_VAR}={_quote(str(store.root))}",
     )
+    invocation = (
+        _env_file_invocation(environment, executable)
+        if environment is not None
+        else f"{_quote(str(executable))} --json sleep --if-due --trigger-source cron"
+    )
+    command = " ".join((*prefix, invocation, f">> {_quote(str(log))} 2>&1"))
     identity = _identity(store)
     begin, end = _markers(identity)
     block = [begin, f"{schedule} {command}", end]
@@ -71,6 +74,7 @@ def install(
         interval_minutes=interval,
         command=command,
         log=log,
+        env_file=environment,
         crontab=crontab,
     )
 
@@ -125,6 +129,7 @@ def _payload(
     interval_minutes: int | None = None,
     command: str = "",
     log: pathlib.Path | None = None,
+    env_file: pathlib.Path | None = None,
     entry: str = "",
 ) -> dict[str, object]:
     wsl = _is_wsl()
@@ -147,6 +152,8 @@ def _payload(
         payload["command"] = command
     if log is not None:
         payload["log"] = str(log)
+    if env_file is not None:
+        payload["env_file"] = str(env_file)
     if entry:
         payload["entry"] = entry
     if wsl and running is not True:
@@ -184,6 +191,34 @@ def _resolve_log(store: Store, explicit: str | None) -> pathlib.Path:
     raw = explicit or str(store.layout.state_dir / LOG_FILENAME)
     _validate_value("log", raw)
     return pathlib.Path(raw).expanduser().resolve()
+
+
+def _resolve_env_file(explicit: str | None) -> pathlib.Path | None:
+    if explicit is None:
+        return None
+    _validate_value("env-file", explicit)
+    path = pathlib.Path(explicit).expanduser().resolve()
+    if not path.is_file() or not os.access(path, os.R_OK):
+        raise ValidationError([FieldError("env-file", f"not a readable file: {path}")])
+    if path.stat().st_mode & 0o077:
+        raise ValidationError(
+            [FieldError("env-file", "must not be readable or writable by group or others")]
+        )
+    return path
+
+
+def _env_file_invocation(environment: pathlib.Path, executable: pathlib.Path) -> str:
+    script = 'set -a; . "$1"; set +a; exec "$2" --json sleep --if-due --trigger-source cron'
+    return " ".join(
+        (
+            "/bin/sh",
+            "-c",
+            _quote(script),
+            "agent-memory-cron",
+            _quote(str(environment)),
+            _quote(str(executable)),
+        )
+    )
 
 
 def _required_environment(name: str) -> str:

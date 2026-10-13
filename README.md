@@ -282,6 +282,11 @@ mem --store /absolute/path/to/store --json cron install \
 mem --store /absolute/path/to/store --json cron install \
   --interval-minutes 15 --mem-path /absolute/path/to/mem
 
+# If the configured Reasoner needs environment-only settings, source a private file.
+chmod 600 /absolute/path/to/reasoner.env
+mem --store /absolute/path/to/store --json cron install \
+  --mem-path /absolute/path/to/mem --env-file /absolute/path/to/reasoner.env
+
 # Inspect the managed entry and whether cron is running, then remove only this Store's entry.
 mem --store /absolute/path/to/store --json cron status
 mem --store /absolute/path/to/store --json cron remove
@@ -290,8 +295,9 @@ mem --store /absolute/path/to/store --json cron remove
 The installer writes one Store-identified block to the current user's crontab and preserves all
 unrelated entries. It records absolute Store and `mem` paths, `HOME`, and `PATH`, quotes spaces and
 cron-special percent characters, and appends output to `STORE/.state/cron.log` by default. It does
-not copy secrets into the crontab: Codex and Muse should use their normal files under `HOME`; an
-environment-only endpoint credential must be made available to cron separately. On WSL, status
+not copy secrets into the crontab: Codex and Muse should use their normal files under `HOME`;
+environment-only proxy or endpoint settings can come from an explicit mode-600 `--env-file`, whose
+contents are never included in CLI diagnostics. On WSL, status
 warns when the distribution's cron service is not running. Unsupported systems report that
 `crontab` is unavailable instead of pretending scheduling is active.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 import pytest
 from agent_memory.adapters import cron_schedule
@@ -156,3 +157,70 @@ def test_default_log_is_store_local(tmp_path, cron_harness):
     store.init()
     payload = cron_schedule.install(store, mem_path=str(binary))
     assert pathlib.Path(payload["log"]) == store.layout.state_dir / cron_schedule.LOG_FILENAME
+
+
+def test_private_env_file_is_sourced_without_exposing_its_contents(tmp_path, cron_harness):
+    _state, binary = cron_harness
+    store = Store(tmp_path / "store")
+    store.init()
+    environment = tmp_path / "Reasoner Environment"
+    environment.write_text("HTTPS_PROXY=https://secret.example\n", encoding="utf-8")
+    environment.chmod(0o600)
+
+    payload = cron_schedule.install(
+        store,
+        mem_path=str(binary),
+        env_file=str(environment),
+    )
+
+    assert payload["env_file"] == str(environment)
+    assert "/bin/sh -c" in payload["command"]
+    assert 'set -a; . "$1"; set +a; exec "$2"' in payload["command"]
+    assert f"'{environment}'" in payload["command"]
+    assert "secret.example" not in payload["command"]
+
+
+def test_env_file_invocation_exports_values_to_the_exact_due_aware_command(
+    tmp_path, cron_harness
+):
+    _state, binary = cron_harness
+    binary.write_text(
+        '#!/bin/sh\nprintf "%s|%s|%s\\n" "$REASONER_ROUTE" "$AGENT_MEMORY_STORE" "$*"\n',
+        encoding="utf-8",
+    )
+    store = Store(tmp_path / "Store With Spaces")
+    store.init()
+    environment = tmp_path / "Reasoner Environment"
+    environment.write_text("REASONER_ROUTE=proxy-route\n", encoding="utf-8")
+    environment.chmod(0o600)
+    log = tmp_path / "cron output.log"
+    payload = cron_schedule.install(
+        store,
+        mem_path=str(binary),
+        log_path=str(log),
+        env_file=str(environment),
+    )
+
+    completed = subprocess.run(
+        str(payload["command"]),
+        shell=True,
+        executable="/bin/sh",
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert log.read_text("utf-8").strip() == (
+        f"proxy-route|{store.root}|--json sleep --if-due --trigger-source cron"
+    )
+
+
+def test_env_file_must_be_private(tmp_path, cron_harness):
+    _state, binary = cron_harness
+    store = Store(tmp_path / "store")
+    store.init()
+    environment = tmp_path / "reasoner.env"
+    environment.write_text("TOKEN=secret\n", encoding="utf-8")
+    environment.chmod(0o644)
+
+    with pytest.raises(ValidationError, match="group or others"):
+        cron_schedule.install(store, mem_path=str(binary), env_file=str(environment))

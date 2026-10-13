@@ -37,7 +37,7 @@ def test_a_host_reasoner_asks_for_no_tools():
 
 def test_a_failed_host_is_reported():
     host = FakeHost(HostResult(text="usage: claude ...", ok=False, seconds=0.1, error="boom"))
-    with pytest.raises(ReasonerUnavailableError, match="host reasoner failed"):
+    with pytest.raises(ReasonerUnavailableError, match="host reasoner failed.*boom"):
         HostReasoner(host=host)("review this")
 
 
