@@ -14,10 +14,12 @@ The Write toolkit is the only definition of what the reasoner may do during a ba
 
 A handle becomes nameable in update and supersede once the reconcile sheet or a tool result has
 shown it; any other handle stays refused, so steering by conversation or recalled content can at
-most produce a new file. A refused submission returns per-operation reasons to the reasoner in
-the same run, and the latest accepted submission is the batch's answer. Tools never write the
-Store: accepted operations reach it through the single write path, and store-level rejections
-take the existing repair path.
+most produce a new file. A submission is checked against the reconcile sheet and then by the
+Store's own write preparation, so the reasoner learns every refusal the write would raise inside
+the same run; the latest accepted submission is the batch's answer. Tools never write the Store:
+accepted operations reach it through the single write path, and only what a check cannot see —
+siblings that collide with each other, or the Store changing underneath — falls to the repair
+path.
 
 The toolkit imposes no look budget, turn cap or forced final turn. Request and process timeouts
 detect transport failure; they are not reasoning limits. Why: these are the industry-standard

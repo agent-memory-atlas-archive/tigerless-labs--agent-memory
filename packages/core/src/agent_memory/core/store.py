@@ -66,6 +66,14 @@ class Rejected:
 
 
 @dataclasses.dataclass(frozen=True)
+class _Prepared:
+    candidate: MemoryRecord
+    target: pathlib.Path
+    moved_from: pathlib.Path | None
+    predecessor: MemoryRecord | None
+
+
+@dataclasses.dataclass(frozen=True)
 class BatchResult:
     written: list[MemoryRecord]
     rejected: list[Rejected]
@@ -158,11 +166,28 @@ class Store:
                 raise
         return BatchResult(written=written, rejected=rejected)
 
+    def check_many(self, specs: list[object]) -> list[Rejected]:
+        """The rejections record_many would report, without writing anything.
+
+        Each item is prepared by the same code the write uses, so a check and a write can
+        only disagree where siblings in one batch interact or the store changes in between."""
+        rejected: list[Rejected] = []
+        for index, spec in enumerate(specs):
+            try:
+                self._prepare(_known_fields(spec), archive_excerpts=False)
+            except ValidationError as error:
+                rejected.append(Rejected(index=index, errors=list(error.errors)))
+        return rejected
+
     def _write_one(
         self, spec: dict[str, object]
     ) -> tuple[MemoryRecord, dict[pathlib.Path, bytes | None]]:
         """One malformed item is one rejection: a batch is many memories, and the rest of
         them reaching disk is what keeps a single stray key from costing a conversation."""
+        prepared = self._prepare(spec, archive_excerpts=True)
+        return self._persist(prepared)
+
+    def _prepare(self, spec: dict[str, object], *, archive_excerpts: bool) -> _Prepared:
         schema = self.schemas.require(str(spec.get("type") or ""))
         if not str(spec.get("abstract") or "").strip():
             raise ValidationError([FieldError("abstract", "required")])
@@ -239,17 +264,28 @@ class Store:
         predecessor = self._predecessor(candidate, supersedes)
 
         for excerpt in _as_sequence(spec.get("provenance")):
-            pointer = self._store_provenance(candidate.name, str(excerpt))
+            item = str(excerpt)
+            if parse_pointer(item) is None and not archive_excerpts:
+                continue
+            pointer = self._store_provenance(candidate.name, item)
             if pointer not in candidate.provenance:
                 candidate.provenance.append(pointer)
         self._reject_facts_dated_after_their_evidence(candidate)
-        changed_paths = {target}
-        if moved_from is not None:
-            changed_paths.add(moved_from)
         if predecessor is not None and predecessor.path is not None:
             record_module.invalidate(predecessor, candidate.valid_from or now, candidate.name)
             predecessor.updated = now
             record_module.validate(predecessor, self.config, self.schemas.get(predecessor.type))
+        return _Prepared(candidate, target, moved_from, predecessor)
+
+    def _persist(
+        self, prepared: _Prepared
+    ) -> tuple[MemoryRecord, dict[pathlib.Path, bytes | None]]:
+        candidate, target = prepared.candidate, prepared.target
+        moved_from, predecessor = prepared.moved_from, prepared.predecessor
+        changed_paths = {target}
+        if moved_from is not None:
+            changed_paths.add(moved_from)
+        if predecessor is not None and predecessor.path is not None:
             changed_paths.add(predecessor.path)
         snapshots = {path: path.read_bytes() if path.exists() else None for path in changed_paths}
         try:

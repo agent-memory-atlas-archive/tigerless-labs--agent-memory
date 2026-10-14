@@ -157,6 +157,37 @@ def test_an_empty_or_malformed_submission_is_refused(store):
     assert kit.submission is None
 
 
+def test_a_submission_the_store_would_refuse_is_refused_in_the_run_with_its_reason(store):
+    old = _existing(store)
+    kit = _kit(store)
+    kit.call(toolkit.TOOL_RECALL, {toolkit.ARG_QUERY: "queue timeout"})
+    rewrite = {
+        "type": "fact",
+        "op": "update",
+        "handle": old.name,
+        "fields": {"project": "pipeline", "subject": "queue timeout"},
+        "abstract": "Queue timeout is 30 seconds",
+        "body": "Raised to 30 seconds.",
+    }
+    reply = kit.call(toolkit.TOOL_SUBMIT, {toolkit.ARG_OPERATIONS: [rewrite]})
+    assert reply.is_error
+    assert "operation 0" in reply.text and "supersedes" in reply.text
+    assert kit.submission is None
+    assert store.find(old.name).is_active()
+
+
+def test_a_submission_dated_after_its_evidence_is_refused_then_corrected(store):
+    old = _existing(store)
+    kit = _kit(store)
+    kit.call(toolkit.TOOL_RECALL, {toolkit.ARG_QUERY: "queue timeout"})
+    future = {**_supersede(old.name), "valid_from": "2099-01-01"}
+    refused = kit.call(toolkit.TOOL_SUBMIT, {toolkit.ARG_OPERATIONS: [future]})
+    assert refused.is_error and "valid_from" in refused.text
+    accepted = kit.call(toolkit.TOOL_SUBMIT, {toolkit.ARG_OPERATIONS: [_supersede(old.name)]})
+    assert not accepted.is_error
+    assert kit.submission == [_supersede(old.name)]
+
+
 def test_every_call_is_kept_in_order(store):
     kit = _kit(store)
     kit.call(toolkit.TOOL_RECALL, {toolkit.ARG_QUERY: "queue"})

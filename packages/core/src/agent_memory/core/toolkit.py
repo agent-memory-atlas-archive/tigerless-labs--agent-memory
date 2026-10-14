@@ -185,10 +185,25 @@ class WriteToolkit:
                 f"operation {index}: {error.field}: {error.reason}"
                 for error in reconcile.check(operation, self.sheet)
             )
+        if not problems:
+            problems = self._store_refusals(operations)
         if problems:
             return ToolReply("\n".join(["Nothing was accepted.", *problems]), True)
         self.submission = list(operations)
         return ToolReply(f"accepted {len(operations)} operations")
+
+    def _store_refusals(self, operations: list[dict[str, object]]) -> list[str]:
+        writes = [
+            (index, record_spec)
+            for index, operation in enumerate(operations)
+            if (record_spec := reconcile.to_record_spec(operation, self.sheet)) is not None
+        ]
+        refused = self.store.check_many([record_spec for _, record_spec in writes])
+        return [
+            f"operation {writes[item.index][0]}: {error.field}: {error.reason}"
+            for item in refused
+            for error in item.errors
+        ]
 
     def _extend(self, found: tuple[reconcile.Handle, ...]) -> None:
         known = self.sheet.handle_names()

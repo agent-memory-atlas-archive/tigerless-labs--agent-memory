@@ -35,10 +35,13 @@ how often, and when it is done:
    adapter serves it to the host. Neither transport carries tool semantics (Invariant 8). The
    core still holds no model client (Invariant 5).
 3. **Final operations are a tool call.** `submit_operations` takes the batch's operations under a
-   schema defined once in the toolkit. A refused submission returns per-operation reasons to the
-   model inside the same run; the latest accepted submission is the batch's answer. A run that
-   ends without an accepted submission writes nothing and leaves the backlog in place. Store-level
-   rejections keep the existing repair path; the single write path is unchanged (Invariant 2).
+   schema defined once in the toolkit. A submission is checked against the reconcile sheet and
+   then by the Store's own write preparation (a check that persists nothing), so every refusal
+   returns to the model inside the same run; the latest accepted submission is the batch's
+   answer. A run that ends without an accepted submission writes nothing and leaves the backlog in
+   place. Only sibling collisions or concurrent changes reach the existing repair path; the single
+   write path is unchanged (Invariant 2). Added after the first paired run showed Haiku
+   submissions passing the sheet check and then failing in the Store.
 4. **State crosses the process boundary through the batch scratch directory.** The library seeds
    the toolkit (Store root and the batch's reconcile sheet) into a private per-batch directory;
    the MCP adapter opens the Store read-only and records looks, extended handles and the accepted

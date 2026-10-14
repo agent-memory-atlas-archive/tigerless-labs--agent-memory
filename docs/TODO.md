@@ -25,8 +25,6 @@
 - Persist a per-run Write trace (messages, tool calls, operations, usage), add explicit cache
   breakpoints for endpoints that need them, a context provider per job, and a durable job queue
   in place of the fire-and-forget launch.
-- Validate submissions against the Store, not only the reconcile sheet, so store-level refusals
-  return inside the run instead of through the single-shot text repair.
 - Move Hermes and Muse Code onto the MCP toolkit transport once their tools-only posture passes a
   live preflight; until then they keep the text protocol.
 - Harness Claude Code runs with tools enabled still load the user's MCP servers; on a machine
