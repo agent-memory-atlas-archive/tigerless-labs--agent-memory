@@ -33,6 +33,7 @@ def install(
         raise ValidationError(
             [FieldError("store", f"not initialized; run mem --store {store.root} init first")]
         )
+    _validate_value("store", str(store.root))
     crontab = _require_crontab()
     interval = _validate_interval(interval_minutes)
     executable = _resolve_mem(mem_path)
@@ -182,6 +183,7 @@ def _resolve_mem(explicit: str | None) -> pathlib.Path:
         )
     _validate_value("mem-path", candidate)
     path = pathlib.Path(candidate).expanduser().resolve()
+    _validate_value("mem-path", str(path))
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ValidationError([FieldError("mem-path", f"not an executable file: {path}")])
     return path
@@ -190,7 +192,9 @@ def _resolve_mem(explicit: str | None) -> pathlib.Path:
 def _resolve_log(store: Store, explicit: str | None) -> pathlib.Path:
     raw = explicit or str(store.layout.state_dir / LOG_FILENAME)
     _validate_value("log", raw)
-    return pathlib.Path(raw).expanduser().resolve()
+    path = pathlib.Path(raw).expanduser().resolve()
+    _validate_value("log", str(path))
+    return path
 
 
 def _resolve_env_file(explicit: str | None) -> pathlib.Path | None:
@@ -198,6 +202,7 @@ def _resolve_env_file(explicit: str | None) -> pathlib.Path | None:
         return None
     _validate_value("env-file", explicit)
     path = pathlib.Path(explicit).expanduser().resolve()
+    _validate_value("env-file", str(path))
     if not path.is_file() or not os.access(path, os.R_OK):
         raise ValidationError([FieldError("env-file", f"not a readable file: {path}")])
     if path.stat().st_mode & 0o077:

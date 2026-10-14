@@ -116,6 +116,17 @@ def test_percent_is_escaped_for_crontab_before_shell_quoting(tmp_path, cron_harn
     assert r"percent\%store" in payload["command"]
 
 
+def test_install_rejects_a_store_path_that_could_inject_a_crontab_line(
+    tmp_path, cron_harness
+):
+    _state, binary = cron_harness
+    store = Store(tmp_path / "store\n* * * * * injected")
+    store.init()
+
+    with pytest.raises(ValidationError, match="store: must not contain a newline or NUL"):
+        cron_schedule.install(store, mem_path=str(binary))
+
+
 def test_missing_crontab_and_mem_binary_are_explicit(tmp_path, cron_harness, monkeypatch):
     _state, _binary = cron_harness
     store = Store(tmp_path / "store")
