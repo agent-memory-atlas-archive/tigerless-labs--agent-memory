@@ -253,6 +253,60 @@ failed selected host, credential, request, or endpoint response never switches t
 leaves the original archived backlog eligible for retry. Detached boundary failures are recorded
 in the Store's `.state/hooks.log`.
 
+After a boundary Distillation catches up, the same short-lived process checks whether Manage is
+due. It counts distinct completed sessions, waits for all captured Write work to settle, claims the
+Dream once across Hosts, and starts a detached one-shot worker using the configured Manage
+reasoner. The source Host never overrides `[executor.manage]`. The worker enters the same
+`Manage.sleep()` T0/T1 pipeline as manual sleep, writes the normal Dream report and decision
+ledger, then exits. Repeated Stop, SessionEnd, or PreCompact events do not inflate progress or
+duplicate the Dream. Inspect an active claim or failure with `mem --json dream-status`; a later
+lifecycle event retries failed or stale work. Manual `mem sleep` remains available and always
+runs when explicitly requested.
+
+Automatic Dreaming is enabled by `manage.auto_dream` and can be rolled back by setting it to
+`false`. `manage.claim_lease_seconds` controls crash-recovery eligibility. Default setup installs
+no timer or resident Memory process: if every Host is inactive when the time threshold passes,
+work runs only after the next SessionStart or boundary event. An explicitly installed user cron
+entry can provide an independent wall-clock wake-up.
+
+An external scheduler can supply that optional wake-up without running a Memory Backend. The
+due-aware command derives new completed sessions and elapsed time from Store state; it does not
+accept a caller-provided session count:
+
+```bash
+# Install the default hourly check for one initialized Store.
+mem --store /absolute/path/to/store --json cron install \
+  --mem-path /absolute/path/to/mem
+
+# Or check every 15 minutes. Repeating install updates the same Store entry.
+mem --store /absolute/path/to/store --json cron install \
+  --interval-minutes 15 --mem-path /absolute/path/to/mem
+
+# If the configured Reasoner needs environment-only settings, source a private file.
+chmod 600 /absolute/path/to/reasoner.env
+mem --store /absolute/path/to/store --json cron install \
+  --mem-path /absolute/path/to/mem --env-file /absolute/path/to/reasoner.env
+
+# Inspect the managed entry and whether cron is running, then remove only this Store's entry.
+mem --store /absolute/path/to/store --json cron status
+mem --store /absolute/path/to/store --json cron remove
+```
+
+The installer writes one Store-identified block to the current user's crontab and preserves all
+unrelated entries. It records absolute Store and `mem` paths, `HOME`, and `PATH`, quotes spaces and
+cron-special percent characters, and appends output to `STORE/.state/cron.log` by default. It does
+not copy secrets into the crontab: Codex and Muse should use their normal files under `HOME`;
+environment-only proxy or endpoint settings can come from an explicit mode-600 `--env-file`, whose
+contents are never included in CLI diagnostics. On WSL, status
+warns when the distribution's cron service is not running. Unsupported systems report that
+`crontab` is unavailable instead of pretending scheduling is active.
+
+A not-due invocation returns `status: skipped` and creates no report. Hook and cron triggers share
+the Store claim/lease, maintenance locks, reasoner selection, and `Manage.sleep()` runner, so a
+concurrent wake-up can produce only one effective Dream. The check interval is only a wake-up
+frequency: a Dream still requires the configured elapsed-time and completed-session thresholds.
+Installing, updating, or removing cron never disables lifecycle Hook triggering.
+
 To use Vertex AI, enable it in a Google Cloud project you control, grant the calling identity
 prediction access, authenticate the `gcloud` CLI, and configure that project explicitly:
 
@@ -342,6 +396,7 @@ as `BLOCKED_BY_MUSE_AUTH`; echo or mocked providers do not count as live E2E evi
 
 ```bash
 mem sleep                 # host-backed consolidation; T0 applies, T1 files a proposal
+mem sleep --if-due        # persisted thresholds; skip normally when not due
 mem proposals             # what is waiting on you
 mem decide <id> --accept
 ```

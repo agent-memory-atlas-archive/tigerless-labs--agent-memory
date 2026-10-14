@@ -48,8 +48,9 @@ class HostReasoner:
         )
         if not result.ok:
             name = getattr(self.host, "name", "configured host")
+            detail = f": {result.error.strip()}" if result.error.strip() else ""
             raise ReasonerUnavailableError(
-                f"host reasoner failed for {name}; run mem doctor --host {name}"
+                f"host reasoner failed for {name}{detail}; run mem doctor --host {name}"
             )
         if not result.text.strip():
             name = getattr(self.host, "name", "configured host")

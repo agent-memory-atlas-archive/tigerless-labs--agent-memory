@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 from . import agentic, batching, pending, prompts, reconcile, render
 from .errors import FieldError
+from .locking import file_lock
 from .sessions import Message, Pointer, render_pointer
 from .store import BatchResult, Rejected, Store
 from .watermark import Watermark
@@ -84,7 +85,11 @@ def distill(store: Store, session: str, messages: list[Message], ask: Ask) -> Di
             )
         queued = queue.append(session, [spec for spec, _ in leftovers])
         distilled = max(distilled, batch[-1].index + 1)
-        watermark.settle(session, distilled)
+        with file_lock(
+            store.layout.capture_lock,
+            timeout=store.config.storage.lock_timeout_seconds,
+        ):
+            watermark.settle(session, distilled)
         reports.append(
             BatchReport(
                 pointer=render_pointer(sheet.pointer),
