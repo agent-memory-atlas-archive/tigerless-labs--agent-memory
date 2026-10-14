@@ -22,14 +22,20 @@
 
 ## Executor follow-ups
 
-- Replace the host-CLI reasoner with an executor-owned agent loop: native tool use, a
-  persisted per-run trace (messages, tool calls, operations, usage), explicit prompt caching,
-  a context provider per job, and a durable job queue in place of the fire-and-forget launch.
-  The host CLI stays the zero-key fallback.
+- Persist a per-run Write trace (messages, tool calls, operations, usage), add explicit cache
+  breakpoints for endpoints that need them, a context provider per job, and a durable job queue
+  in place of the fire-and-forget launch.
+- Validate submissions against the Store, not only the reconcile sheet, so store-level refusals
+  return inside the run instead of through the single-shot text repair.
+- Move Hermes and Muse Code onto the MCP toolkit transport once their tools-only posture passes a
+  live preflight; until then they keep the text protocol.
+- A decision and a fact with the same key fields derive the same name: the second write is
+  refused, and the text repair folded the decision into the fact (observed live with Codex,
+  2026-10-14). Names, or the collision rule, need to account for type.
 - Boundary distillation through the host CLI takes 80–100 s per boundary on Haiku (three
   negotiation rounds, one cold process each); measure again once the executor loop lands.
-- Verify the Codex dialect end to end, including the one-time hook trust review; it is
-  covered by unit tests only.
+- Verify the Codex lifecycle hooks end to end, including the one-time hook trust review; the
+  Codex Write executor is verified live, the hooks by unit tests only.
 
 ## Muse Code follow-ups
 

@@ -245,6 +245,14 @@ the producing host only as `--source-host`, so it supplies the default or resolv
 "source"` but never replaces an explicit Write host. A headless reasoner carries an executor
 marker that prevents recursive capture.
 
+Write runs the reasoner as a standard tool-use agent over one toolkit — `recall`, `read`, and
+`submit_operations` — with no cap on looks or turns. An endpoint reasoner drives that loop through
+native function calling. Claude Code and Codex run their own loop in one headless process per
+batch: the toolkit is served by a per-batch stdio MCP server, their built-in tools, user
+configuration and native memory are off, and the distillation instructions replace their system
+prompt. Hermes and Muse Code keep the line-oriented text protocol. A run that ends without an
+accepted submission writes nothing and leaves the backlog for retry.
+
 Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
 usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's
 table. Unset operation values inherit the legacy `[executor]` value, preserving existing Store

@@ -28,7 +28,7 @@ from agent_memory.core.errors import ReasonerUnavailableError
 from agent_memory.core.toolkit import WriteToolkit
 
 from .credentials import API_KEY_ENV, BASE_URL_ENV, VertexCredentials
-from .hosts import BINARIES, HOST_CLAUDE_CODE, Host, HostSpec, ToolServer
+from .hosts import BINARIES, HOST_CLAUDE_CODE, Host, HostResult, HostSpec, ToolServer
 
 CHAT_COMPLETIONS = "/chat/completions"
 DEFAULT_ENDPOINT_MODEL = "google/gemini-2.5-flash"
@@ -59,11 +59,7 @@ class HostReasoner:
             environment={EXECUTOR_ENV_VAR: "1"},
         )
         if not result.ok:
-            name = getattr(self.host, "name", "configured host")
-            detail = f": {result.error.strip()}" if result.error.strip() else ""
-            raise ReasonerUnavailableError(
-                f"host reasoner failed for {name}{detail}; run mem doctor --host {name}"
-            )
+            raise _host_failure(self.host, result)
         if not result.text.strip():
             name = getattr(self.host, "name", "configured host")
             raise ReasonerUnavailableError(
@@ -104,12 +100,16 @@ class ToolHostReasoner(HostReasoner):
                 environment={EXECUTOR_ENV_VAR: "1"},
             )
             if not result.ok:
-                name = getattr(self.host, "name", "configured host")
-                detail = f": {result.error.strip()}" if result.error.strip() else ""
-                raise ReasonerUnavailableError(
-                    f"host reasoner failed for {name}{detail}; run mem doctor --host {name}"
-                )
+                raise _host_failure(self.host, result)
             toolkit.absorb_directory(directory)
+
+
+def _host_failure(host: Host, result: HostResult) -> ReasonerUnavailableError:
+    name = getattr(host, "name", "configured host")
+    detail = f": {result.error.strip()}" if result.error.strip() else ""
+    return ReasonerUnavailableError(
+        f"host reasoner failed for {name}{detail}; run mem doctor --host {name}"
+    )
 
 
 @dataclasses.dataclass
