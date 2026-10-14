@@ -61,6 +61,8 @@ def negotiate(
                 budget += 1
                 transcript.append(prompts.format_retry(reply))
                 continue
+            if not specs and not errors:
+                errors = [FieldError("response", "executor returned no final operations")]
             return Outcome(specs, errors, sheet, rounds, "\n\n".join(transcript))
         observations = []
         for call in calls:
