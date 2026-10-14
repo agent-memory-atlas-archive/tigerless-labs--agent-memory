@@ -41,7 +41,11 @@ OPERATION_SCHEMA: dict[str, object] = {
         "abstract": {"type": "string", "description": "The one line that states the fact."},
         "body": {"type": "string", "description": "Markdown with the specifics in full."},
         "handle": {"type": "string", "description": "The memory an update or supersede names."},
-        "valid_from": {"type": "string", "description": "When the fact starts to hold."},
+        "valid_from": {
+            "type": "string",
+            "description": "ISO date the fact holds from, on or before the latest message it "
+            "cites; an effective date announced for later belongs in the body.",
+        },
         "create_group": {"type": "boolean"},
         "provenance": {
             "type": "array",
