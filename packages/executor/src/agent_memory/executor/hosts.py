@@ -224,7 +224,7 @@ class ClaudeCodeDialect(Dialect):
         if tools_enabled:
             command += ["--allowedTools", tool_pattern]
         else:
-            command += ["--tools", ""]
+            command += ["--tools", "", "--strict-mcp-config"]
         return command + ["--system-prompt", system_prompt or BARE_SYSTEM_PROMPT]
 
     def disables_native_memory(self, rendered_command: str) -> bool:

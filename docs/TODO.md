@@ -29,6 +29,10 @@
   return inside the run instead of through the single-shot text repair.
 - Move Hermes and Muse Code onto the MCP toolkit transport once their tools-only posture passes a
   live preflight; until then they keep the text protocol.
+- Harness Claude Code runs with tools enabled still load the user's MCP servers; on a machine
+  with many servers their tool definitions alone overflow Haiku's context, and any memory-like
+  server contaminates attribution. Decide strict MCP for harness runs and record the change in
+  the experiment ledger.
 - A decision and a fact with the same key fields derive the same name: the second write is
   refused, and the text repair folded the decision into the fact (observed live with Codex,
   2026-10-14). Names, or the collision rule, need to account for type.
