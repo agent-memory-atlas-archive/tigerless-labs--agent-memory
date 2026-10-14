@@ -34,8 +34,9 @@
 - A decision and a fact with the same key fields derive the same name: the second write is
   refused, and the text repair folded the decision into the fact (observed live with Codex,
   2026-10-14). Names, or the collision rule, need to account for type.
-- Boundary distillation through the host CLI takes 80–100 s per boundary on Haiku (three
-  negotiation rounds, one cold process each); measure again once the executor loop lands.
+- Measure native-tool distillation on real boundaries and a write-side benchmark round. On one
+  fixed supersede scenario, Haiku took a median 14 s in one process against 33 s for the text
+  protocol (evidence: experiments/runs/native-tools-latency).
 - Verify the Codex lifecycle hooks end to end, including the one-time hook trust review; the
   Codex Write executor is verified live, the hooks by unit tests only.
 
