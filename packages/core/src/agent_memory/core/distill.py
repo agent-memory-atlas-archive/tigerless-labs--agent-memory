@@ -11,7 +11,7 @@ import dataclasses
 from collections.abc import Callable
 
 from . import agentic, batching, pending, prompts, reconcile, render
-from .errors import FieldError
+from .errors import FieldError, ValidationError
 from .locking import file_lock
 from .sessions import Message, Pointer, render_pointer
 from .store import BatchResult, Rejected, Store
@@ -68,6 +68,8 @@ def distill(store: Store, session: str, messages: list[Message], ask: Ask) -> Di
             event_lane=config.event_lane,
         )
         outcome = agentic.negotiate(store, sheet, prompt, ask, config)
+        if outcome.errors:
+            raise ValidationError(outcome.errors)
         sheet = outcome.sheet
         specs, errors = outcome.specs, outcome.errors
         specs = queue.drain(session) + specs
