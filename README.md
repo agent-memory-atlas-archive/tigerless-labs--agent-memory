@@ -225,11 +225,87 @@ Codex keeps its normal MCP approval boundary; the first tool call can still requ
 user approval even after setup has configured and verified the server.
 
 SessionStart injects, Stop and SessionEnd distil where supported, and PreCompact evicts.
-Distillation reasons through the host that fired the boundary, using its existing login. Point
-`[executor]` in Store `config.toml` at a model endpoint instead to use an endpoint reasoner.
-Endpoint use is opt-in and never carries a Tigerless project or credential. A failed host,
-credential, request, or endpoint response is reported and leaves the archived backlog eligible
-for retry. Detached boundary failures are recorded in the Store's `.state/hooks.log`.
+By default, Write reasons through the host that produced the source session while Manage uses
+the Store's legacy `[executor]` policy. They can be configured independently without changing
+which source session is archived or cited:
+
+```toml
+[executor.write]
+reasoner = "host"
+host = "muse-code" # or "source", "codex", or "claude-code"
+
+[executor.manage]
+reasoner = "host"
+host = "codex"
+```
+
+For `mem distill` and `mem sleep`, `--reason`, `--reason-host`, and `--reason-model` override the
+corresponding operation policy. Operation policy overrides legacy `[executor]` values. Hooks pass
+the producing host only as `--source-host`, so it supplies the default or resolves `host =
+"source"` but never replaces an explicit Write host. A headless reasoner carries an executor
+marker that prevents recursive capture.
+
+Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
+usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's
+table. Unset operation values inherit the legacy `[executor]` value, preserving existing Store
+configuration. Endpoint use is opt-in and never carries a Tigerless project or credential. A
+failed selected host, credential, request, or endpoint response never switches transport; Write
+leaves the original archived backlog eligible for retry. Detached boundary failures are recorded
+in the Store's `.state/hooks.log`.
+
+After a boundary Distillation catches up, the same short-lived process checks whether Manage is
+due. It counts distinct completed sessions, waits for all captured Write work to settle, claims the
+Dream once across Hosts, and starts a detached one-shot worker using the configured Manage
+reasoner. The source Host never overrides `[executor.manage]`. The worker enters the same
+`Manage.sleep()` T0/T1 pipeline as manual sleep, writes the normal Dream report and decision
+ledger, then exits. Repeated Stop, SessionEnd, or PreCompact events do not inflate progress or
+duplicate the Dream. Inspect an active claim or failure with `mem --json dream-status`; a later
+lifecycle event retries failed or stale work. Manual `mem sleep` remains available and always
+runs when explicitly requested.
+
+Automatic Dreaming is enabled by `manage.auto_dream` and can be rolled back by setting it to
+`false`. `manage.claim_lease_seconds` controls crash-recovery eligibility. Default setup installs
+no timer or resident Memory process: if every Host is inactive when the time threshold passes,
+work runs only after the next SessionStart or boundary event. An explicitly installed user cron
+entry can provide an independent wall-clock wake-up.
+
+An external scheduler can supply that optional wake-up without running a Memory Backend. The
+due-aware command derives new completed sessions and elapsed time from Store state; it does not
+accept a caller-provided session count:
+
+```bash
+# Install the default hourly check for one initialized Store.
+mem --store /absolute/path/to/store --json cron install \
+  --mem-path /absolute/path/to/mem
+
+# Or check every 15 minutes. Repeating install updates the same Store entry.
+mem --store /absolute/path/to/store --json cron install \
+  --interval-minutes 15 --mem-path /absolute/path/to/mem
+
+# If the configured Reasoner needs environment-only settings, source a private file.
+chmod 600 /absolute/path/to/reasoner.env
+mem --store /absolute/path/to/store --json cron install \
+  --mem-path /absolute/path/to/mem --env-file /absolute/path/to/reasoner.env
+
+# Inspect the managed entry and whether cron is running, then remove only this Store's entry.
+mem --store /absolute/path/to/store --json cron status
+mem --store /absolute/path/to/store --json cron remove
+```
+
+The installer writes one Store-identified block to the current user's crontab and preserves all
+unrelated entries. It records absolute Store and `mem` paths, `HOME`, and `PATH`, quotes spaces and
+cron-special percent characters, and appends output to `STORE/.state/cron.log` by default. It does
+not copy secrets into the crontab: Codex and Muse should use their normal files under `HOME`;
+environment-only proxy or endpoint settings can come from an explicit mode-600 `--env-file`, whose
+contents are never included in CLI diagnostics. On WSL, status
+warns when the distribution's cron service is not running. Unsupported systems report that
+`crontab` is unavailable instead of pretending scheduling is active.
+
+A not-due invocation returns `status: skipped` and creates no report. Hook and cron triggers share
+the Store claim/lease, maintenance locks, reasoner selection, and `Manage.sleep()` runner, so a
+concurrent wake-up can produce only one effective Dream. The check interval is only a wake-up
+frequency: a Dream still requires the configured elapsed-time and completed-session thresholds.
+Installing, updating, or removing cron never disables lifecycle Hook triggering.
 
 To use Vertex AI, enable it in a Google Cloud project you control, grant the calling identity
 prediction access, authenticate the `gcloud` CLI, and configure that project explicitly:
@@ -241,6 +317,11 @@ project = "your-google-cloud-project"
 location = "global"
 model = "google/gemini-3.7-flash"
 ```
+
+The legacy form above continues to apply to both operations unless an operation table overrides
+it. Put the same endpoint fields under `[executor.write]` or `[executor.manage]` to scope them.
+`mem setup` and `mem doctor` report configuration and live-preflight results separately as Write
+and Manage reasoner checks.
 
 `GOOGLE_CLOUD_PROJECT` and `VERTEX_LOCATION` override the Store values. Alternatively, an
 OpenAI-compatible endpoint can be selected with `endpoint` and a `GEMINI_API_KEY` supplied in
@@ -295,68 +376,6 @@ one explicit experiment workspace. It never adds `--yolo` or `--disable-sandbox`
 AGENT_MEMORY_LIVE_MUSE=1 uv run python tools/muse_sandbox_probe.py
 ```
 
-#### Muse SDK / `muse serve`
-
-SDK applications do not need a manually managed backend or the persistent pproxy process used by
-the interactive setup above. From the SDK application directory, run the managed bootstrap once:
-
-```bash
-export OPENROUTER_API_KEY="..."  # preferably injected by the application's secret manager
-mem setup --host muse-code --provider openrouter --sdk
-```
-
-The command initializes the selected Store, checks Muse, Node 20+, the project-local
-`@muse-code/sdk`, the managed launcher, credential availability, and version compatibility, then
-performs one real request through the same invocation-scoped bridge used by the SDK. It prints the
-absolute `museBin` and arguments to use. It does not modify persistent Muse settings or auth, start
-a persistent pproxy, edit `package.json`, or install system software. When a dependency is absent,
-the failed check includes the exact next command; rerun bootstrap after applying it.
-Run it from the application workspace, not from a workspace nested under the system temporary
-directory: Muse requires its process-lifetime tool-output directory to live outside the workspace.
-
-`OPENROUTER_API_KEY` must be present in the environment of both bootstrap and the application
-process. In production, inject it with the application's secret manager. For a local shell, avoid
-putting the key on a command line or in shell history:
-
-```bash
-read -rsp 'OpenRouter API key: ' OPENROUTER_API_KEY
-echo
-export OPENROUTER_API_KEY
-mem setup --host muse-code --provider openrouter --sdk
-node app.mjs
-unset OPENROUTER_API_KEY
-```
-
-An existing Muse `meta` or `openrouter` credential is also recognized, so the environment variable
-can be omitted in that case. Use the bootstrap result as the SDK launch contract:
-
-```js
-import { MuseClient } from "@muse-code/sdk";
-
-const client = await MuseClient.spawn({
-  museBin: "/absolute/path/printed/by/bootstrap/mem-muse",
-  args: ["serve"],
-  env: process.env,
-  clientInfo: { name: "my_app", version: "1.0.0" },
-});
-const session = await client.startSession({ workspaceRoot: process.cwd() });
-// Send turns through session, then release the owned backend.
-await client.close();
-```
-
-`mem-muse` initializes the selected Store, creates a private invocation configuration, installs
-the lifecycle hooks and skill, enables `mem-mcp` when that optional executable is installed,
-serves the Muse model catalog through an invocation-scoped OpenRouter bridge, and starts the real
-`muse serve`. It leaves the user's Muse settings and auth file unchanged. SDK close and startup
-failure both tear down Muse, the generated credential copy, and the bridge; detached distillation
-starts a fresh hook-free `mem-muse exec`, so it neither depends on the parent backend nor recurses.
-
-The SDK requires Node 20 or newer. Pin `@muse-code/sdk` to the Muse Code CLI version because they
-ship in lockstep. Bootstrap rejects major or minor version skew. Patch skew is reported as an
-advisory warning and must still pass the live request. OpenRouter can reject an otherwise valid
-request when the selected model is unavailable for the account or region; the Store hook log
-retains that redacted upstream error and the archived session remains eligible for retry.
-
 Start with the three ordered portability mechanics before a full four-host matrix:
 
 ```bash
@@ -377,6 +396,7 @@ as `BLOCKED_BY_MUSE_AUTH`; echo or mocked providers do not count as live E2E evi
 
 ```bash
 mem sleep                 # host-backed consolidation; T0 applies, T1 files a proposal
+mem sleep --if-due        # persisted thresholds; skip normally when not due
 mem proposals             # what is waiting on you
 mem decide <id> --accept
 ```

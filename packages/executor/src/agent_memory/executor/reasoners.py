@@ -14,16 +14,15 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import re
 import shutil
 import urllib.error
 import urllib.request
 
-from agent_memory.core.config import EXECUTOR_ENV_VAR, MUSE_LAUNCHER_ENV_VAR
+from agent_memory.core.config import EXECUTOR_ENV_VAR
 from agent_memory.core.errors import ReasonerUnavailableError
 
 from .credentials import API_KEY_ENV, BASE_URL_ENV, VertexCredentials
-from .hosts import BINARIES, HOST_CLAUDE_CODE, HOST_MUSE_CODE, Host, HostSpec
+from .hosts import BINARIES, HOST_CLAUDE_CODE, Host, HostSpec
 
 CHAT_COMPLETIONS = "/chat/completions"
 DEFAULT_ENDPOINT_MODEL = "google/gemini-2.5-flash"
@@ -31,11 +30,6 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 ROLE_USER = "user"
 EMPTY = ""
 CLAUDE_BUNDLED_ENV = "CLAUDE_CODE_EXECPATH"
-SECRET_PATTERNS = (
-    re.compile(r"sk-or-[A-Za-z0-9_-]+"),
-    re.compile(r"(?i)(bearer\s+)[^\s\"']+"),
-    re.compile(r'(?i)(api[_-]?key["\']?\s*[:=]\s*["\']?)[^\s,}\"\']+'),
-)
 
 
 @dataclasses.dataclass
@@ -53,24 +47,27 @@ class HostReasoner:
             environment={EXECUTOR_ENV_VAR: "1"},
         )
         if not result.ok:
-            detail = _safe_detail(result.error)
-            suffix = f": {detail}" if detail else ""
+            name = getattr(self.host, "name", "configured host")
+            detail = f": {result.error.strip()}" if result.error.strip() else ""
             raise ReasonerUnavailableError(
-                f"host reasoner failed{suffix}; run mem doctor for this host"
+                f"host reasoner failed for {name}{detail}; run mem doctor --host {name}"
             )
         if not result.text.strip():
-            raise ReasonerUnavailableError("host reasoner returned an empty response")
+            name = getattr(self.host, "name", "configured host")
+            raise ReasonerUnavailableError(
+                f"host reasoner returned an empty response for {name}"
+            )
         return result.text
 
     @classmethod
     def for_host(cls, name: str, model: str = EMPTY) -> HostReasoner:
         """A host is named by its dialect, not by its binary — `claude-code` runs `claude`."""
-        binary, default_model = BINARIES.get(name, (name, EMPTY))
+        if name not in BINARIES:
+            raise ReasonerUnavailableError(f"unsupported host reasoner {name!r}")
+        binary, default_model = BINARIES[name]
         bundled = os.environ.get(CLAUDE_BUNDLED_ENV, EMPTY)
         if name == HOST_CLAUDE_CODE and bundled and shutil.which(binary) is None:
             binary = bundled
-        if name == HOST_MUSE_CODE and os.environ.get(MUSE_LAUNCHER_ENV_VAR):
-            binary = os.environ[MUSE_LAUNCHER_ENV_VAR]
         return cls(host=Host(HostSpec(name=name, binary=binary, model=model or default_model)))
 
 
@@ -131,14 +128,3 @@ def _first_message(payload: object) -> str:
     message = choices[0].get("message") if isinstance(choices[0], dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     return content if isinstance(content, str) else EMPTY
-
-
-def _safe_detail(detail: str) -> str:
-    safe = detail.strip()
-    for pattern in SECRET_PATTERNS:
-        safe = pattern.sub(_replacement, safe)
-    return safe
-
-
-def _replacement(match: re.Match[str]) -> str:
-    return f"{match.group(1)}[REDACTED]" if match.groups() else "[REDACTED]"
