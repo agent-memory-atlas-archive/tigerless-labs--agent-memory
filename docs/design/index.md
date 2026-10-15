@@ -2,6 +2,8 @@
 
 - [Batch write boundaries](batch-write-boundaries.md) defines per-item rejection and
   recovery after a batch write or projection failure.
+- [Write negotiation](write-negotiation.md) defines the Write toolkit, its two transports, and
+  why the reasoner runs as an unconstrained tool-use agent.
 - [Host adapters](host-adapters.md) defines lifecycle, executor, native-memory, and sandbox
   boundaries for supported agent hosts.
 - [Event-driven automatic Dreaming](event-driven-auto-dreaming.md) defines due progress,

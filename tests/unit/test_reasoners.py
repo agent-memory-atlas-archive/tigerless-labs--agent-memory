@@ -129,6 +129,19 @@ def test_the_default_executor_reasons_through_the_host_cli():
     assert chosen.host.spec.name == "codex"
 
 
+def test_hosts_with_an_mcp_posture_negotiate_with_tools_and_the_rest_keep_text():
+    from agent_memory.core.config import ExecutorConfig
+    from agent_memory.core.reasoning import ToolReasoner
+    from agent_memory.executor import distiller
+    from agent_memory.executor.hosts import BINARIES, DIALECTS
+
+    for name in BINARIES:
+        chosen = distiller.distiller(ExecutorConfig(host=name))
+        assert isinstance(chosen, ToolReasoner) == DIALECTS[name].supports_tools, name
+        assert callable(chosen)
+    assert isinstance(distiller.distiller(ExecutorConfig(reasoner="endpoint")), ToolReasoner)
+
+
 def test_an_executor_configured_for_an_endpoint_uses_it():
     from agent_memory.core.config import ExecutorConfig
     from agent_memory.executor import distiller

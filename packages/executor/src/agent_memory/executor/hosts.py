@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 
 from agent_memory.core import observation
 from agent_memory.core.config import MUSE_SETTINGS_ENV_VAR
@@ -49,6 +50,24 @@ PROMPT_SEPARATOR = "\n\n"
 ERROR_EXCERPT = 400
 ANSWER_FILENAME = "answer.txt"
 PROMPT_FILENAME = "prompt.txt"
+INSTRUCTIONS_FILENAME = "instructions.md"
+CODEX_TOOL_APPROVAL = "approve"
+CODEX_DISABLED_FEATURES = (
+    "apps",
+    "plugins",
+    "multi_agent",
+    "hooks",
+    "memories",
+    "shell_tool",
+    "unified_exec",
+    "skill_search",
+    "skill_mcp_dependency_install",
+    "browser_use",
+    "computer_use",
+    "view_image",
+    "image_generation",
+    "goals",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,6 +76,16 @@ class HostResult:
     ok: bool
     seconds: float
     error: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class ToolServer:
+    """A stdio MCP server the host starts for one run, and the only tools it may call."""
+
+    name: str
+    command: str
+    args: tuple[str, ...]
+    tools: tuple[str, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -91,6 +120,18 @@ class Dialect:
     """How one host is spoken to. Every method is pure, so the shape is testable offline."""
 
     prompt_on_stdin = True
+    supports_tools = False
+
+    def tool_command(
+        self,
+        spec: HostSpec,
+        *,
+        system_prompt: str,
+        instructions_file: pathlib.Path,
+        server: ToolServer,
+        answer_file: pathlib.Path,
+    ) -> list[str]:
+        raise NotImplementedError
 
     def command(
         self,
@@ -131,6 +172,33 @@ class Dialect:
 class ClaudeCodeDialect(Dialect):
     """Its memory is the Write tool aimed at ~/.claude/projects/<cwd>/memory/."""
 
+    supports_tools = True
+
+    def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
+        configured = {
+            "mcpServers": {
+                server.name: {"type": "stdio", "command": server.command, "args": list(server.args)}
+            }
+        }
+        allowed = ",".join(f"mcp__{server.name}__{tool}" for tool in server.tools)
+        return [
+            spec.binary,
+            "-p",
+            "--model",
+            spec.model,
+            "--strict-mcp-config",
+            "--mcp-config",
+            json.dumps(configured),
+            "--tools",
+            "",
+            "--allowedTools",
+            allowed,
+            "--disallowedTools",
+            CLAUDE_NATIVE_TOOLS,
+            "--system-prompt",
+            system_prompt,
+        ]
+
     def command(
         self,
         spec,
@@ -156,7 +224,7 @@ class ClaudeCodeDialect(Dialect):
         if tools_enabled:
             command += ["--allowedTools", tool_pattern]
         else:
-            command += ["--tools", ""]
+            command += ["--tools", "", "--strict-mcp-config"]
         return command + ["--system-prompt", system_prompt or BARE_SYSTEM_PROMPT]
 
     def disables_native_memory(self, rendered_command: str) -> bool:
@@ -166,6 +234,38 @@ class ClaudeCodeDialect(Dialect):
 class CodexDialect(Dialect):
     """No system-prompt flag, so it rides in the prompt; and stdout carries the whole session
     transcript, so the final message is read from the file the host writes it to."""
+
+    supports_tools = True
+
+    def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
+        prefix = f"mcp_servers.{server.name}"
+        overrides = {
+            "model_instructions_file": str(instructions_file),
+            f"{prefix}.command": server.command,
+            f"{prefix}.args": list(server.args),
+            f"{prefix}.required": True,
+            f"{prefix}.enabled_tools": list(server.tools),
+            f"{prefix}.default_tools_approval_mode": CODEX_TOOL_APPROVAL,
+        }
+        command = [
+            spec.binary,
+            "exec",
+            "--model",
+            spec.model,
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--sandbox",
+            CODEX_SANDBOX_READONLY,
+            "--output-last-message",
+            str(answer_file),
+        ]
+        for key, value in overrides.items():
+            command += ["-c", f"{key}={json.dumps(value)}"]
+        for feature in CODEX_DISABLED_FEATURES:
+            command += ["--disable", feature]
+        return command
 
     def command(
         self,
@@ -381,9 +481,8 @@ class Host:
         environment: dict[str, str] | None = None,
         tool_pattern: str = MEM_TOOL_PATTERN,
     ) -> HostResult:
-        last = HostResult(text="", ok=False, seconds=0.0, error="not attempted")
-        for attempt in range(self.spec.attempts):
-            last = self._attempt(
+        return self._retrying(
+            lambda: self._attempt(
                 prompt,
                 store_root,
                 tools_enabled,
@@ -393,11 +492,58 @@ class Host:
                 environment or {},
                 tool_pattern,
             )
+        )
+
+    def converse(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str,
+        server: ToolServer,
+        environment: dict[str, str] | None = None,
+    ) -> HostResult:
+        """One headless run in which the host's own loop calls only the server's tools."""
+        return self._retrying(
+            lambda: self._converse_attempt(prompt, system_prompt, server, environment or {})
+        )
+
+    def _retrying(self, attempt: Callable[[], HostResult]) -> HostResult:
+        last = HostResult(text="", ok=False, seconds=0.0, error="not attempted")
+        for number in range(self.spec.attempts):
+            last = attempt()
             if last.ok:
                 return last
-            if attempt + 1 < self.spec.attempts:
-                time.sleep(self.spec.retry_backoff_seconds * (attempt + 1))
+            if number + 1 < self.spec.attempts:
+                time.sleep(self.spec.retry_backoff_seconds * (number + 1))
         return last
+
+    def _converse_attempt(
+        self,
+        prompt: str,
+        system_prompt: str,
+        server: ToolServer,
+        environment: dict[str, str],
+    ) -> HostResult:
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch_path = pathlib.Path(scratch)
+            answer_file = scratch_path / ANSWER_FILENAME
+            instructions_file = scratch_path / INSTRUCTIONS_FILENAME
+            instructions_file.write_text(system_prompt, encoding="utf-8")
+            command = self.dialect.tool_command(
+                self.spec,
+                system_prompt=system_prompt,
+                instructions_file=instructions_file,
+                server=server,
+                answer_file=answer_file,
+            )
+            return self._invoke(
+                command,
+                prompt,
+                self._environment(None, environment),
+                scratch_path,
+                answer_file,
+                require_answer=False,
+            )
 
     def _attempt(
         self,
@@ -501,6 +647,7 @@ class Host:
         environment: dict[str, str],
         workdir: pathlib.Path | None,
         answer_file: pathlib.Path,
+        require_answer: bool = True,
     ) -> HostResult:
         started = time.monotonic()
         evidence = environment.get(observation.ENV)
@@ -552,7 +699,7 @@ class Host:
             detail = (completed.stderr.strip() or completed.stdout.strip())[:ERROR_EXCERPT]
             return HostResult("", False, elapsed, detail or "non-zero exit with no output")
         text = self.dialect.answer(completed.stdout, answer_file)
-        if self.spec.name in (HOST_CODEX, HOST_MUSE_CODE) and not text:
+        if require_answer and self.spec.name in (HOST_CODEX, HOST_MUSE_CODE) and not text:
             label = "Codex" if self.spec.name == HOST_CODEX else "Muse"
             return HostResult("", False, elapsed, f"missing or empty {label} final message")
         return HostResult(text, True, elapsed)

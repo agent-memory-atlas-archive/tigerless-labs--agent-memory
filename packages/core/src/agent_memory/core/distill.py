@@ -60,14 +60,14 @@ def distill(store: Store, session: str, messages: list[Message], ask: Ask) -> Di
     distilled = watermark.read(session).distilled
     for batch in batching.batches(messages, config.max_distill_input_chars):
         sheet = reconcile.build(store, session, batch)
-        prompt = prompts.distill_sheet(
+        brief = prompts.distill_brief(
             prompts.slot_table(sheet.slots),
             sheet.render(),
             render.conversation(batch),
             slot_table=config.slot_table,
             event_lane=config.event_lane,
         )
-        outcome = agentic.negotiate(store, sheet, prompt, ask, config)
+        outcome = agentic.negotiate(store, sheet, brief, ask, config)
         if outcome.errors:
             raise ValidationError(outcome.errors)
         sheet = outcome.sheet

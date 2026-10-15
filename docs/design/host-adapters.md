@@ -5,6 +5,12 @@ eviction, and pause moments. Executor dialects translate a prompt and tool postu
 headless host invocation and normalize only its final answer. Capture, archive, distillation,
 Memory, Recall, and Manage stay host-neutral.
 
+For Write negotiation, Claude Code and Codex run tools-only: the only tools are the Write
+toolkit's, served by the per-batch MCP adapter ([Write negotiation](write-negotiation.md)); the
+host's built-in tools, user configuration, rules and native memory are off and its system prompt
+is replaced. Claude's bare mode stays unused because it drops OAuth and would break zero-key
+install.
+
 Write and Manage have independent Store-level reasoner policies. Explicit CLI choices override
 the operation policy, which overrides the legacy executor policy. Without an operation policy,
 automatic Write uses the host that produced the source session while Manage uses the legacy
