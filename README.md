@@ -233,6 +233,7 @@ which source session is archived or cited:
 [executor.write]
 reasoner = "host"
 host = "muse-code" # or "source", "codex", or "claude-code"
+tool_mode = "native" # opt in to Muse's per-batch MCP tool loop; default is "auto"
 
 [executor.manage]
 reasoner = "host"
@@ -248,10 +249,16 @@ marker that prevents recursive capture.
 Write runs the reasoner as a standard tool-use agent over one toolkit — `recall`, `read`, and
 `submit_operations` — with no cap on looks or turns. An endpoint reasoner drives that loop through
 native function calling. Claude Code and Codex run their own loop in one headless process per
-batch: the toolkit is served by a per-batch stdio MCP server, their built-in tools, user
-configuration and native memory are off, and the distillation instructions replace their system
-prompt. Hermes and Muse Code keep the line-oriented text protocol. A run that ends without an
-accepted submission writes nothing and leaves the backlog for retry.
+batch by default: the toolkit is served by a per-batch stdio MCP server, their built-in tools,
+user configuration and native memory are off, and the distillation instructions replace their
+system prompt. Muse Code keeps the line-oriented text protocol under `tool_mode = "auto"`; an
+explicit `tool_mode = "native"` uses one isolated Muse process with only that batch's MCP
+`recall`, `read`, and `submit_operations` tools. Muse native mode requires Muse Code 1.4.4 or
+newer and fails explicitly on older versions; it never falls back to text. `tool_mode = "text"`
+forces the compatibility protocol for a Host. Hermes remains on that protocol. A run that ends
+without an accepted submission writes nothing and leaves the backlog for retry. `tool_mode`
+applies only to Write Host reasoners; endpoint Write remains native function calling and Manage
+review remains the bounded text-verdict path.
 
 Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
 usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's
@@ -394,11 +401,12 @@ mem-exp interop --workspace /tmp/muse-memory-smoke \
 Then omit `--pairs` and pass `--hosts claude-code,codex,hermes,muse-code` for the 4×4 matrix.
 Current limitations: only the root Muse session log is captured; child/observer logs are ignored,
 setup installs MCP only when `--mcp` is requested, and live hook/MCP/sandbox behavior must be
-verified on a machine with Muse Code installed and authenticated. Muse 1.4.3 with the tested
-OpenRouter model may shorten a fully qualified MCP tool ID to `memory_recall`; Muse rejects that
-shorthand even though the configured server handshake succeeds. Lifecycle hooks and SessionStart
-injection do not depend on that optional model-driven MCP call. A missing Muse login is reported
-as `BLOCKED_BY_MUSE_AUTH`; echo or mocked providers do not count as live E2E evidence.
+verified on a machine with Muse Code installed and authenticated. Muse 1.4.3 does not support the
+exact `run.toolset` MCP selection required by native Write mode. A tested OpenRouter model may
+also shorten a fully qualified MCP tool ID to `memory_recall`; Muse rejects that shorthand even
+though the configured server handshake succeeds. Lifecycle hooks and SessionStart injection do
+not depend on that optional model-driven MCP call. A missing Muse login is reported as
+`BLOCKED_BY_MUSE_AUTH`; echo or mocked providers do not count as live E2E evidence.
 
 ## Let it sleep
 

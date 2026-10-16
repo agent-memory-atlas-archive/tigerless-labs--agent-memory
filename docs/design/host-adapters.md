@@ -11,6 +11,13 @@ host's built-in tools, user configuration, rules and native memory are off and i
 is replaced. Claude's bare mode stays unused because it drops OAuth and would break zero-key
 install.
 
+Muse native Write is opt-in because its verified compatibility floor differs from lifecycle
+support. Muse 1.4.4 added exact MCP selection through `run.toolset`; native mode supplies that
+selection as a one-run override and stages one required server in the already-isolated Muse
+settings. Older CLIs fail with a version-specific error in the same attempted process. Automatic
+mode continues to use the text protocol, so enabling Muse lifecycle support never silently
+changes Write execution. Hermes has no native Write posture here.
+
 Write and Manage have independent Store-level reasoner policies. Explicit CLI choices override
 the operation policy, which overrides the legacy executor policy. Without an operation policy,
 automatic Write uses the host that produced the source session while Manage uses the legacy

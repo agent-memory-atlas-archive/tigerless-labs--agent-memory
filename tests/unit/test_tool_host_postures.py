@@ -40,12 +40,19 @@ def _overrides(command):
     return tomllib.loads("\n".join(pairs))
 
 
-def test_only_claude_code_and_codex_run_write_tools_over_mcp():
+def test_claude_codex_and_opted_in_muse_can_run_write_tools_over_mcp():
     supported = {name for name, dialect in hosts.DIALECTS.items() if dialect.supports_tools}
-    assert supported == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX}
+    assert supported == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE}
 
 
-@pytest.mark.parametrize("name", [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX])
+def test_only_claude_code_and_codex_use_native_write_tools_by_default():
+    defaults = {name for name, dialect in hosts.DIALECTS.items() if dialect.tools_by_default}
+    assert defaults == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX}
+
+
+@pytest.mark.parametrize(
+    "name", [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE]
+)
 def test_tool_commands_keep_native_memory_off(name, tmp_path):
     command = _command(name, tmp_path)
     assert command[0] == name
@@ -92,4 +99,27 @@ def test_codex_turns_off_local_execution(tmp_path):
     disabled = {command[i + 1] for i, part in enumerate(command) if part == "--disable"}
     assert {"shell_tool", "unified_exec", "multi_agent", "plugins", "apps"} <= disabled
     assert "--add-dir" not in command
+    assert SYSTEM not in " ".join(command)
+
+
+def test_muse_turns_off_unrelated_tools_and_keeps_the_sandbox(tmp_path):
+    command = _command(hosts.HOST_MUSE_CODE, tmp_path)
+
+    assert command[1] == "exec"
+    assert _after(command, "-c") == (
+        'run.toolset=["mcp__memory__recall", "mcp__memory__read", '
+        '"mcp__memory__submit_operations"]'
+    )
+    assert {
+        "--no-foreign-personal-context",
+        "--disable-reminders",
+        "--no-session-log",
+        "--disable-shell",
+        "--disable-web-tools",
+        "--disable-write",
+    } <= set(command)
+    assert _after(command, "--approval-mode") == "never"
+    assert "--disable-sandbox" not in command
+    assert "--yolo" not in command
+    assert "--max-model-steps" not in command
     assert SYSTEM not in " ".join(command)
