@@ -51,9 +51,11 @@
 
 ## Muse Code follow-ups
 
-- Run the isolated Muse shell, lifecycle hook, and stdio MCP sandbox preflight on an installed,
-  authenticated Muse 1.4.4+ build, then record the observed compatibility result. The local
-  1.4.3 build ignores `run.toolset`, and its saved API key was rejected on 2026-10-16.
+- Muse Code 1.4.9 passed the OpenRouter/pproxy native Write matrix on 2026-10-16: New,
+  Recall/Read/Supersede, Skip, tool-error observation, Store/Provenance, and Watermark. The live
+  test is `AGENT_MEMORY_LIVE_MUSE_NATIVE=1 uv run pytest -q
+  tests/system/test_live_muse_native_write.py`. Keep this opt-in credentialed check in the release
+  matrix; ordinary CI covers the same MCP/Store chain with the deterministic Host.
 - Run Muse-to-Muse, Muse-to-Codex, and Codex-to-Muse portability smoke before the full four-host
   matrix.
 - Map `MUSE_SESSION_ID` into shared MCP source context only if provenance can accept it without a

@@ -121,5 +121,5 @@ def test_muse_turns_off_unrelated_tools_and_keeps_the_sandbox(tmp_path):
     assert _after(command, "--approval-mode") == "never"
     assert "--disable-sandbox" not in command
     assert "--yolo" not in command
-    assert "--max-model-steps" not in command
+    assert _after(command, "--max-model-steps") == str(hosts.MUSE_NATIVE_MAX_MODEL_STEPS)
     assert SYSTEM not in " ".join(command)

@@ -25,6 +25,7 @@ from collections.abc import Callable
 from agent_memory.core import observation
 from agent_memory.core.config import MUSE_SETTINGS_ENV_VAR
 
+from . import muse_namespaces
 from .credentials import VertexCredentials
 
 HOST_CLAUDE_CODE = "claude-code"
@@ -70,6 +71,8 @@ CODEX_DISABLED_FEATURES = (
 )
 MUSE_TOOLSET_SETTING = "run.toolset"
 MUSE_NATIVE_WRITE_REQUIREMENT = "Muse native Write tools require Muse Code 1.4.4 or newer"
+MUSE_RUNTIME_TMPDIR = "/var/tmp"
+MUSE_NATIVE_MAX_MODEL_STEPS = 8
 
 
 @dataclasses.dataclass(frozen=True)
@@ -375,6 +378,8 @@ class MuseCodeDialect(Dialect):
             "--disable-write",
             "--approval-mode",
             "never",
+            "--max-model-steps",
+            str(MUSE_NATIVE_MAX_MODEL_STEPS),
             "--prompt-file",
             PROMPT_PLACEHOLDER,
             "--workspace",
@@ -570,20 +575,34 @@ class Host:
                 server=server,
                 answer_file=answer_file,
             )
+            settings = None
             if self.spec.name == HOST_MUSE_CODE:
                 environment = self._isolated_muse_environment(environment, scratch_path)
+                # Muse 1.4.9 rejects its process-lifetime tool-output root when TMPDIR and the
+                # workspace share the /tmp tree. Muse creates and cleans its own unique child.
+                environment["TMPDIR"] = MUSE_RUNTIME_TMPDIR
                 self._stage_muse_tool_server(environment, server)
+                settings = (
+                    pathlib.Path(environment["XDG_CONFIG_HOME"]) / "muse" / "settings.json"
+                )
                 command, prompt = self.dialect.invocation(
                     command, prompt, system_prompt, scratch_path
                 )
-            return self._invoke(
-                command,
-                prompt,
-                self._environment(None, environment),
-                scratch_path,
-                answer_file,
-                require_answer=False,
-            )
+
+            def invoke() -> HostResult:
+                return self._invoke(
+                    command,
+                    prompt,
+                    self._environment(None, environment),
+                    scratch_path,
+                    answer_file,
+                    require_answer=False,
+                )
+
+            if settings is not None:
+                with muse_namespaces.for_muse_settings(settings):
+                    return invoke()
+            return invoke()
 
     def _attempt(
         self,
@@ -700,9 +719,6 @@ class Host:
                 "mode": "required",
             }
         }
-        settings[MUSE_TOOLSET_SETTING] = [
-            f"mcp__{server.name}__{tool}" for tool in server.tools
-        ]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

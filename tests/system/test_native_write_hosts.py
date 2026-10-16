@@ -152,7 +152,9 @@ def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_pa
     assert seen["executor"] == "1"
     assert count.read_text(encoding="utf-8") == "1"
     if name == hosts.HOST_MUSE_CODE:
-        assert seen["settings"]["run.toolset"] == [
+        assert "run.toolset" not in seen["settings"]
+        override = seen["argv"][seen["argv"].index("-c") + 1]
+        assert json.loads(override.removeprefix("run.toolset=")) == [
             "mcp__memory__recall",
             "mcp__memory__read",
             "mcp__memory__submit_operations",

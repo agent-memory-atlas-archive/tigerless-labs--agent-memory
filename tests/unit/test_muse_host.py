@@ -528,16 +528,19 @@ def test_muse_native_write_stages_only_the_batch_toolkit(tmp_path, monkeypatch):
                 "mode": "required",
             }
         },
-        "run.toolset": [
-            "mcp__memory__recall",
-            "mcp__memory__read",
-            "mcp__memory__submit_operations",
-        ],
     }
     assert observed["environment"]["AGENT_MEMORY_EXECUTOR"] == "1"
+    assert observed["environment"]["TMPDIR"] == hosts.MUSE_RUNTIME_TMPDIR
+    override = observed["command"][observed["command"].index("-c") + 1]
+    assert json.loads(override.removeprefix("run.toolset=")) == [
+        "mcp__memory__recall",
+        "mcp__memory__read",
+        "mcp__memory__submit_operations",
+    ]
     assert "--disable-shell" in observed["command"]
     assert "--disable-web-tools" in observed["command"]
     assert "--disable-write" in observed["command"]
+    assert observed["command"][observed["command"].index("--max-model-steps") + 1] == "8"
 
 
 def test_muse_native_write_rejects_a_version_without_exact_mcp_tool_selection(monkeypatch):

@@ -16,7 +16,11 @@ support. Muse 1.4.4 added exact MCP selection through `run.toolset`; native mode
 selection as a one-run override and stages one required server in the already-isolated Muse
 settings. Older CLIs fail with a version-specific error in the same attempted process. Automatic
 mode continues to use the text protocol, so enabling Muse lifecycle support never silently
-changes Write execution. Hermes has no native Write posture here.
+changes Write execution. Muse/OpenRouter namespace calls pass through a per-run loopback
+compatibility bridge before the existing pproxy: it flattens only the model request's tool schema,
+passes authentication through, and leaves Agent execution and MCP dispatch with Muse. A run is
+limited to eight model steps and fails closed without an accepted submission. Hermes has no
+native Write posture here.
 
 Write and Manage have independent Store-level reasoner policies. Explicit CLI choices override
 the operation policy, which overrides the legacy executor policy. Without an operation policy,
