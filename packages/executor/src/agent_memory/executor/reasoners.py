@@ -68,7 +68,13 @@ class HostReasoner:
         return result.text
 
     @classmethod
-    def for_host(cls, name: str, model: str = EMPTY) -> HostReasoner:
+    def for_host(
+        cls,
+        name: str,
+        model: str = EMPTY,
+        provider: str = EMPTY,
+        allow_data_training: bool = False,
+    ) -> HostReasoner:
         """A host is named by its dialect, not by its binary — `claude-code` runs `claude`."""
         if name not in BINARIES:
             raise ReasonerUnavailableError(f"unsupported host reasoner {name!r}")
@@ -76,7 +82,17 @@ class HostReasoner:
         bundled = os.environ.get(CLAUDE_BUNDLED_ENV, EMPTY)
         if name == HOST_CLAUDE_CODE and bundled and shutil.which(binary) is None:
             binary = bundled
-        return cls(host=Host(HostSpec(name=name, binary=binary, model=model or default_model)))
+        return cls(
+            host=Host(
+                HostSpec(
+                    name=name,
+                    binary=binary,
+                    model=model or default_model,
+                    provider=provider,
+                    allow_data_training=allow_data_training,
+                )
+            )
+        )
 
 
 @dataclasses.dataclass

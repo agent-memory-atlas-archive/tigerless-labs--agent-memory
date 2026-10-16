@@ -35,7 +35,13 @@ if count_path:
         count = 0
     open(count_path, "w", encoding="utf-8").write(str(count + 1))
 
-if "--prompt-file" in argv:
+if "--query-file" in argv:
+    prompt = open(after("--query-file"), encoding="utf-8").read()
+    settings_path = os.path.join(os.environ["HERMES_HOME"], "config.yaml")
+    settings = json.load(open(settings_path, encoding="utf-8"))
+    server = next(iter(settings["mcp_servers"].values()))
+    system = prompt
+elif "--prompt-file" in argv:
     prompt = open(after("--prompt-file"), encoding="utf-8").read()
     settings_path = os.path.join(os.environ["XDG_CONFIG_HOME"], "muse", "settings.json")
     settings = json.load(open(settings_path, encoding="utf-8"))
@@ -122,9 +128,12 @@ def _supersede(handle):
 
 
 @pytest.mark.parametrize(
-    "name", [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE]
+    "name",
+    [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_HERMES, hosts.HOST_MUSE_CODE],
 )
 def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_path, monkeypatch):
+    if name == hosts.HOST_HERMES:
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-root"))
     old, messages = _batch(store)
     log = tmp_path / "host-log.json"
     script = [
@@ -149,7 +158,7 @@ def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_pa
     assert all(reply["result"]["isError"] is False for reply in seen["replies"])
     assert "our queue timeout is 30 seconds" in seen["stdin"].lower()
     assert ("our queue timeout is 30 seconds" in seen["system"].lower()) == (
-        name == hosts.HOST_MUSE_CODE
+        name in (hosts.HOST_HERMES, hosts.HOST_MUSE_CODE)
     )
     assert toolkit.TOOL_SUBMIT in seen["system"]
     assert seen["executor"] == "1"
@@ -163,12 +172,24 @@ def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_pa
             "mcp__memory__submit_operations",
         ]
         assert set(seen["settings"]["mcp_servers"]) == {"memory"}
+    if name == hosts.HOST_HERMES:
+        assert set(seen["settings"]["mcp_servers"]) == {hosts.HERMES_WRITE_SERVER_NAME}
+        configured = seen["settings"]["mcp_servers"][hosts.HERMES_WRITE_SERVER_NAME]
+        assert configured["tools"] == {
+            "include": ["recall", "read", "submit_operations"],
+            "resources": False,
+            "prompts": False,
+        }
 
 
-@pytest.mark.parametrize("name", [hosts.HOST_CODEX, hosts.HOST_MUSE_CODE])
+@pytest.mark.parametrize(
+    "name", [hosts.HOST_CODEX, hosts.HOST_HERMES, hosts.HOST_MUSE_CODE]
+)
 def test_a_host_run_without_a_submission_writes_nothing(
     name, store, tmp_path, monkeypatch
 ):
+    if name == hosts.HOST_HERMES:
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-root"))
     old, messages = _batch(store)
     monkeypatch.setenv(
         "FAKE_HOST_SCRIPT", json.dumps([[toolkit.TOOL_RECALL, {toolkit.ARG_QUERY: "queue"}]])

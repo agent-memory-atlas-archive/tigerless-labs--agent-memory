@@ -143,6 +143,8 @@ class WriteConfig:
 class OperationExecutorConfig:
     reasoner: str = ""
     host: str = ""
+    host_provider: str = ""
+    host_allow_data_training: bool = False
     host_model: str = ""
     model: str = ""
     endpoint: str = ""
@@ -156,6 +158,8 @@ class OperationExecutorConfig:
 class ExecutorConfig:
     reasoner: str = REASONER_HOST
     host: str = "claude-code"
+    host_provider: str = ""
+    host_allow_data_training: bool = False
     host_model: str = ""
     model: str = "google/gemini-3.7-flash"
     endpoint: str = ""

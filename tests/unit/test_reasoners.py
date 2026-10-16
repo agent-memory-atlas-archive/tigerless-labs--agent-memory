@@ -142,29 +142,51 @@ def test_hosts_with_a_default_mcp_posture_negotiate_with_tools_and_the_rest_keep
     assert isinstance(distiller.distiller(ExecutorConfig(reasoner="endpoint")), ToolReasoner)
 
 
-def test_muse_native_write_tools_are_automatic_and_text_can_be_forced():
+@pytest.mark.parametrize("name", ["hermes", "muse-code"])
+def test_additional_native_write_tools_are_automatic_and_text_can_be_forced(name):
     from agent_memory.core.config import TOOL_MODE_TEXT, ExecutorConfig
     from agent_memory.core.reasoning import ToolReasoner
     from agent_memory.executor import distiller
-    from agent_memory.executor.hosts import HOST_MUSE_CODE
+    native = distiller.distiller(ExecutorConfig(host=name))
+    text = distiller.distiller(ExecutorConfig(host=name, tool_mode=TOOL_MODE_TEXT))
 
-    muse = distiller.distiller(ExecutorConfig(host=HOST_MUSE_CODE))
-    muse_text = distiller.distiller(
-        ExecutorConfig(host=HOST_MUSE_CODE, tool_mode=TOOL_MODE_TEXT)
-    )
-
-    assert isinstance(muse, ToolReasoner)
-    assert not isinstance(muse_text, ToolReasoner)
+    assert isinstance(native, ToolReasoner)
+    assert not isinstance(text, ToolReasoner)
 
 
-def test_native_write_tools_fail_closed_for_a_host_without_a_tool_posture():
+def test_native_write_tools_fail_closed_for_an_unknown_host():
     from agent_memory.core.config import TOOL_MODE_NATIVE, ExecutorConfig
     from agent_memory.core.errors import ReasonerUnavailableError
     from agent_memory.executor import distiller
-    from agent_memory.executor.hosts import HOST_HERMES
-
     with pytest.raises(ReasonerUnavailableError, match="does not support native Write tools"):
-        distiller.distiller(ExecutorConfig(host=HOST_HERMES, tool_mode=TOOL_MODE_NATIVE))
+        distiller.distiller(ExecutorConfig(host="unknown", tool_mode=TOOL_MODE_NATIVE))
+
+
+def test_hermes_openrouter_does_not_construct_vertex_credentials():
+    from agent_memory.core.config import ExecutorConfig
+    from agent_memory.executor import distiller
+    from agent_memory.executor.hosts import HERMES_DATA_TRAINING_REQUIREMENT
+
+    with pytest.raises(ReasonerUnavailableError, match=HERMES_DATA_TRAINING_REQUIREMENT):
+        distiller.distiller(
+            ExecutorConfig(
+                host="hermes",
+                host_provider="openrouter",
+                host_model="meta/muse-spark-1.3-contributor",
+            )
+        )
+
+    chosen = distiller.distiller(
+        ExecutorConfig(
+            host="hermes",
+            host_provider="openrouter",
+            host_model="meta/muse-spark-1.3-contributor",
+            host_allow_data_training=True,
+        )
+    )
+    assert chosen.host.spec.provider == "openrouter"
+    assert chosen.host.spec.allow_data_training is True
+    assert chosen.host.credentials is None
 
 
 def test_an_unknown_write_tool_mode_is_not_silently_downgraded():

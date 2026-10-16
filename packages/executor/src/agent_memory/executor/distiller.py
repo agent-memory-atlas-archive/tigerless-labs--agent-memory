@@ -19,7 +19,7 @@ from agent_memory.core.config import (
 from agent_memory.core.errors import ReasonerUnavailableError
 
 from .credentials import VertexCredentials
-from .hosts import DIALECTS
+from .hosts import DIALECTS, HERMES_DATA_TRAINING_REQUIREMENT, HOST_HERMES
 from .reasoners import EndpointReasoner, HostReasoner, ToolHostReasoner
 
 
@@ -33,6 +33,12 @@ def distiller(config: ExecutorConfig) -> EndpointReasoner | HostReasoner:
             raise ReasonerUnavailableError(
                 f"host reasoner {config.host!r} does not support native Write tools"
             )
+        if (
+            config.host == HOST_HERMES
+            and "contributor" in config.host_model.lower().split("-")
+            and not config.host_allow_data_training
+        ):
+            raise ReasonerUnavailableError(HERMES_DATA_TRAINING_REQUIREMENT)
         speaks_tools = mode == TOOL_MODE_NATIVE or (
             mode == TOOL_MODE_AUTO
             and dialect is not None
@@ -40,7 +46,12 @@ def distiller(config: ExecutorConfig) -> EndpointReasoner | HostReasoner:
             and dialect.tools_by_default
         )
         chosen = ToolHostReasoner if speaks_tools else HostReasoner
-        return chosen.for_host(config.host, model=config.host_model)
+        return chosen.for_host(
+            config.host,
+            model=config.host_model,
+            provider=config.host_provider,
+            allow_data_training=config.host_allow_data_training,
+        )
     if config.reasoner == REASONER_ENDPOINT:
         return EndpointReasoner(
             model=config.model,
