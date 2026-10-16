@@ -37,6 +37,36 @@ def test_operation_policies_select_independent_hosts_without_source_override():
     assert manage.host == "codex"
 
 
+def test_operation_host_provider_overrides_the_legacy_provider():
+    executor = Config.default().executor
+    executor.host_provider = "gemini"
+    executor.write = OperationExecutorConfig(
+        reasoner="host", host="hermes", host_provider="openrouter"
+    )
+
+    write = selection.resolve(executor, selection.WRITE)
+    manage = selection.resolve(executor, selection.MANAGE)
+
+    assert write.host_provider == "openrouter"
+    assert manage.host_provider == "gemini"
+
+
+def test_data_training_consent_is_explicit_and_operation_scoped():
+    executor = Config.default().executor
+    executor.write = OperationExecutorConfig(
+        reasoner="host",
+        host="hermes",
+        host_provider="openrouter",
+        host_allow_data_training=True,
+    )
+
+    write = selection.resolve(executor, selection.WRITE)
+    manage = selection.resolve(executor, selection.MANAGE)
+
+    assert write.host_allow_data_training is True
+    assert manage.host_allow_data_training is False
+
+
 def test_source_is_an_explicit_write_host_policy_but_is_invalid_for_manage():
     executor = Config.default().executor
     executor.write = OperationExecutorConfig(reasoner="host", host="source")

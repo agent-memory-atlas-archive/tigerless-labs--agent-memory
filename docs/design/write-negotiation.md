@@ -22,8 +22,8 @@ siblings that collide with each other, or the Store changing underneath — fall
 path.
 
 The toolkit imposes no look budget or forced final turn. Request and process timeouts detect
-transport failure. A Host may additionally impose a declared safety bound: Muse native Write
-allows eight model steps, then fails closed if no operation was accepted. Why: these are the
+transport failure. A Host may additionally impose a declared safety bound: Hermes and Muse native
+Write allow eight model steps, then fail closed if no operation was accepted. Why: these are the
 industry-standard mechanics of a tool-use agent, while a bounded third-party compatibility route
 must not retry malformed calls indefinitely.
 
@@ -33,12 +33,13 @@ must not retry malformed calls indefinitely.
 |---|---|---|
 | Model endpoint | The executor | Native function calling over a structured message history |
 | Claude Code, Codex | The host CLI, one headless run per batch | A per-batch stdio MCP adapter over the same toolkit |
+| Hermes | The isolated host CLI, one headless run per batch | A whitelisted per-batch stdio MCP adapter selected as the complete dynamic toolset |
 | Muse Code | The isolated host CLI, one headless run per batch | A required per-batch stdio MCP adapter selected as Muse's complete toolset |
 
 The endpoint, Claude Code and Codex transports send the distillation instructions and type table
 as the system prompt and the batch's reconcile sheet and conversation as the user message,
-constant material first so prefixes stay cacheable. Muse preserves the same order in one prompt
-file because its CLI has no system-prompt replacement flag. No transport carries tool semantics
+constant material first so prefixes stay cacheable. Hermes and Muse preserve the same order in one
+prompt file because their CLIs have no system-prompt replacement flag. No transport carries tool semantics
 (Invariant 8). On a host transport the toolkit state crosses the process boundary through the
 batch's private scratch directory: seeded before the run, absorbed after it.
 
@@ -48,13 +49,41 @@ Watermark untouched. Host and endpoint failures follow the attribution rules in
 
 Hosts without a verified MCP posture keep the line-oriented text protocol: the library runs the
 loop, parses looks and operations from plain text, and calls the same toolkit for recall and read.
-`tool_mode = "auto"` selects native tools for Muse, Claude Code, and Codex. `native` and `text`
+`tool_mode = "auto"` selects native tools for Hermes, Muse, Claude Code, and Codex. `native` and `text`
 select a Host path explicitly; an unsupported or invalid selection fails rather than changing
 transport. Muse native mode requires 1.4.4 because
 that release added exact MCP names to `run.toolset`. Its isolated settings contain only provider
 routing and the required batch server; Shell, Web, file writes, reminders, personal context and
 session persistence are disabled. Muse has no system-prompt replacement flag, so the same system
 instructions and batch material are placed, in that order, in its one prompt file.
+
+Hermes native mode requires Hermes Agent 0.22.2. One temporary profile contains only the batch
+server, and the dynamic `agent-memory-write` toolset avoids collision with Hermes' built-in
+`memory` toolset. The provider is pinned separately from the model. In particular, OpenRouter
+uses its own API key and never enters the Vertex/gcloud credential path. Rules, personal memory,
+plugins, skills, delegation, Shell, Web, and unrelated MCP servers are absent from the run.
+Contributor-tier models require `host_allow_data_training = true`; the adapter does not infer
+consent from the model name.
+
+The profile lives below the active Hermes data root's `profiles/` directory, so the official
+launcher reuses its installed dependency environment; it is removed after the run. An unrelated
+empty `HERMES_HOME` is intentionally avoided because Hermes treats it as a new installation and
+may provision dependencies instead of starting the batch.
+
+## Hermes live comparison
+
+An authenticated Hermes Agent 0.22.2 run through OpenRouter and
+`meta/muse-spark-1.3-contributor` exercised the complete native matrix in 139.47 seconds. A fixed
+New pair produced valid memory with the expected source provenance:
+
+| Mode | Wall time | Host starts | Model requests | Memory tool calls |
+|---|---:|---:|---:|---:|
+| Text protocol | 22.525 s | 1 | 1 | 0 |
+| Native MCP | 44.102 s | 1 | not exposed by Hermes CLI | 2 |
+
+This sample does not show a latency win: native execution was 21.577 seconds slower. Its measured
+benefit is that Recall and submission occurred as tool calls inside one continuing Agent session;
+the text model submitted directly and therefore did not exercise retrieval.
 
 Muse's OpenRouter route has one transport-only compatibility step. Muse 1.4.9 serializes the MCP
 catalog as a Responses API namespace, OpenRouter returns the child name plus that namespace, and

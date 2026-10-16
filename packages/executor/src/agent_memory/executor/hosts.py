@@ -12,6 +12,7 @@ of them to it.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -43,6 +44,14 @@ BINARIES = {
 MEM_TOOL_PATTERN = "Bash(mem:*)"
 CLAUDE_NATIVE_TOOLS = "Write,Edit,NotebookEdit,WebSearch,WebFetch,Task"
 HERMES_TOOLSETS = "terminal"
+HERMES_WRITE_SERVER_NAME = "agent-memory-write"
+HERMES_NATIVE_MAX_TURNS = 8
+HERMES_NATIVE_WRITE_REQUIREMENT = (
+    "Hermes native Write tools require Hermes Agent 0.22.2 or newer"
+)
+HERMES_DATA_TRAINING_REQUIREMENT = (
+    "Hermes contributor models require host_allow_data_training = true"
+)
 CODEX_SANDBOX_TOOLS = "workspace-write"
 CODEX_SANDBOX_READONLY = "read-only"
 BARE_SYSTEM_PROMPT = "You are a helpful assistant. Answer the user directly and concisely."
@@ -102,6 +111,7 @@ class HostSpec:
     attempts: int = 3
     retry_backoff_seconds: float = 5.0
     provider: str = ""
+    allow_data_training: bool = False
     reasoning_effort: str = ""
 
     def available(self) -> bool:
@@ -324,6 +334,27 @@ class HermesDialect(Dialect):
     """One-shot mode loads its own memory toolset by default; the toolset list drops it."""
 
     prompt_on_stdin = False
+    supports_tools = True
+    tools_by_default = True
+
+    def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
+        command = [
+            spec.binary,
+            "chat",
+            "--oneshot",
+            "--query-file",
+            PROMPT_PLACEHOLDER,
+            "--model",
+            self.routed_model(spec),
+            "--toolsets",
+            HERMES_WRITE_SERVER_NAME,
+            "--max-turns",
+            str(HERMES_NATIVE_MAX_TURNS),
+            "--ignore-rules",
+        ]
+        if spec.provider:
+            command += ["--provider", spec.provider]
+        return command
 
     def command(
         self,
@@ -341,18 +372,26 @@ class HermesDialect(Dialect):
         if spec.provider:
             command += ["--provider", spec.provider]
         command += ["-t", HERMES_TOOLSETS if tools_enabled else ""]
-        return command + ["--ignore-user-config", "--ignore-rules", "--yolo"]
+        return command + ["--ignore-rules", "--yolo"]
 
     def routed_model(self, spec: HostSpec) -> str:
         """Hermes eats one `<provider>/` prefix off the model as routing, so a backend that
         wants a publisher-qualified id — Vertex wants `google/<model>` — needs one added back."""
-        return f"{spec.provider}/{spec.model}" if spec.provider else spec.model
+        if spec.provider == "gemini":
+            return f"{spec.provider}/{spec.model}"
+        return spec.model
 
     def stdin(self, prompt: str, system_prompt: str) -> str:
         return (system_prompt + PROMPT_SEPARATOR + prompt) if system_prompt else prompt
 
+    def invocation(self, command, prompt, system_prompt, scratch):
+        prompt_path = scratch / PROMPT_FILENAME
+        prompt_path.write_text(self.stdin(prompt, system_prompt), encoding="utf-8")
+        return [str(prompt_path) if part == PROMPT_PLACEHOLDER else part for part in command], ""
+
     def disables_native_memory(self, rendered_command: str) -> bool:
-        _, _, tail = rendered_command.partition("-t ")
+        marker = "--toolsets " if "--toolsets " in rendered_command else "-t "
+        _, _, tail = rendered_command.partition(marker)
         toolsets = tail.split(" ")[0] if tail else ""
         return "memory" not in toolsets.split(",")
 
@@ -504,7 +543,11 @@ class Host:
     def __init__(self, spec: HostSpec):
         self.spec = spec
         self.dialect = DIALECTS.get(spec.name, DIALECTS[HOST_CLAUDE_CODE])
-        self.credentials = VertexCredentials() if spec.name == HOST_HERMES else None
+        self.credentials = (
+            VertexCredentials()
+            if spec.name == HOST_HERMES and spec.provider in ("", "gemini")
+            else None
+        )
 
     @property
     def name(self) -> str:
@@ -551,7 +594,10 @@ class Host:
         last = HostResult(text="", ok=False, seconds=0.0, error="not attempted")
         for number in range(self.spec.attempts):
             last = attempt()
-            if last.ok or last.error == MUSE_NATIVE_WRITE_REQUIREMENT:
+            if last.ok or last.error in (
+                MUSE_NATIVE_WRITE_REQUIREMENT,
+                HERMES_NATIVE_WRITE_REQUIREMENT,
+            ):
                 return last
             if number + 1 < self.spec.attempts:
                 time.sleep(self.spec.retry_backoff_seconds * (number + 1))
@@ -577,7 +623,11 @@ class Host:
                 answer_file=answer_file,
             )
             settings = None
-            if self.spec.name == HOST_MUSE_CODE:
+            if self.spec.name == HOST_HERMES:
+                command, prompt = self.dialect.invocation(
+                    command, prompt, system_prompt, scratch_path
+                )
+            elif self.spec.name == HOST_MUSE_CODE:
                 environment = self._isolated_muse_environment(environment, scratch_path)
                 # Muse 1.4.9 rejects its process-lifetime tool-output root when TMPDIR and the
                 # workspace share the /tmp tree. Muse creates and cleans its own unique child.
@@ -603,7 +653,78 @@ class Host:
             if settings is not None:
                 with muse_namespaces.for_muse_settings(settings):
                     return invoke()
+            if self.spec.name == HOST_HERMES:
+                with self._isolated_hermes_environment(
+                    environment,
+                    server,
+                    allow_data_training=self.spec.allow_data_training,
+                ) as isolated:
+                    environment = isolated
+                    return invoke()
             return invoke()
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _isolated_hermes_environment(
+        extra: dict[str, str],
+        server: ToolServer | None,
+        *,
+        allow_data_training: bool = False,
+    ):
+        """Give Hermes an ephemeral profile that reuses only its installed runtime.
+
+        Hermes scopes dependency environments to the data root containing ``profiles/``.
+        A profile below that root therefore keeps the installed CLI usable while isolating
+        config, sessions, skills, and native memory.  An unrelated temporary HERMES_HOME would
+        instead be treated as a new installation and try to provision dependencies per Write.
+        """
+        source = {**os.environ, **extra}
+        root = Host._hermes_data_root(source)
+        profiles = root / "profiles"
+        profiles.mkdir(parents=True, exist_ok=True)
+        home = pathlib.Path(tempfile.mkdtemp(prefix="agent-memory-", dir=profiles))
+        configured: dict[str, object] = {}
+        if server is not None:
+            configured["mcp_servers"] = {
+                HERMES_WRITE_SERVER_NAME: {
+                    "command": server.command,
+                    "args": list(server.args),
+                    "enabled": True,
+                    "tools": {
+                        "include": list(server.tools),
+                        "resources": False,
+                        "prompts": False,
+                    },
+                }
+            }
+        if allow_data_training:
+            configured["security"] = {"allow_data_training_tiers_noninteractive": True}
+        try:
+            target = home / "config.yaml"
+            target.write_text(
+                json.dumps(configured, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            yield {
+                **extra,
+                "HERMES_HOME": str(home),
+                "HERMES_DISABLE_LAZY_INSTALLS": "1",
+            }
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+
+    @staticmethod
+    def _hermes_data_root(environment: dict[str, str]) -> pathlib.Path:
+        configured = environment.get("HERMES_HOME", "").strip()
+        if configured:
+            home = pathlib.Path(os.path.expandvars(configured)).expanduser()
+            return home.parent.parent if home.parent.name == "profiles" else home
+        suffix = environment.get("HERMES_DATA_DIR_SUFFIX", "")
+        if os.name == "nt":
+            local = environment.get("LOCALAPPDATA", "").strip()
+            base = pathlib.Path(local) if local else pathlib.Path.home() / "AppData" / "Local"
+            return base / f"hermes{suffix}"
+        user_home = pathlib.Path(environment.get("HOME", str(pathlib.Path.home()))).expanduser()
+        return user_home / f".hermes{suffix}"
 
     def _attempt(
         self,
@@ -636,9 +757,25 @@ class Host:
             )
             if self.spec.name == HOST_MUSE_CODE:
                 environment = self._isolated_muse_environment(environment, scratch_path)
-            return self._invoke(
-                command, payload, self._environment(store_root, environment), workdir, answer_file
-            )
+
+            def invoke() -> HostResult:
+                return self._invoke(
+                    command,
+                    payload,
+                    self._environment(store_root, environment),
+                    workdir,
+                    answer_file,
+                )
+
+            if self.spec.name == HOST_HERMES:
+                with self._isolated_hermes_environment(
+                    environment,
+                    None,
+                    allow_data_training=self.spec.allow_data_training,
+                ) as isolated:
+                    environment = isolated
+                    return invoke()
+            return invoke()
 
     @staticmethod
     def _isolated_muse_environment(
@@ -780,6 +917,16 @@ class Host:
         )
         if completed.returncode != 0:
             detail = (completed.stderr.strip() or completed.stdout.strip())[:ERROR_EXCERPT]
+            if (
+                self.spec.name == HOST_HERMES
+                and HERMES_WRITE_SERVER_NAME in " ".join(command)
+                and (
+                    "unrecognized arguments" in detail
+                    or "unknown option" in detail
+                    or "invalid choice" in detail
+                )
+            ):
+                detail = HERMES_NATIVE_WRITE_REQUIREMENT
             if (
                 self.spec.name == HOST_MUSE_CODE
                 and MUSE_TOOLSET_SETTING in " ".join(command)

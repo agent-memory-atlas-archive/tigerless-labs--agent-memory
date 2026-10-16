@@ -25,9 +25,9 @@
 - Persist a per-run Write trace (messages, tool calls, operations, usage), add explicit cache
   breakpoints for endpoints that need them, a context provider per job, and a durable job queue
   in place of the fire-and-forget launch.
-- Keep Hermes on the text protocol until its own CLI/SDK tool posture is verified. Muse now has an
-  explicit native MCP mode, but `auto` stays on text until an authenticated Muse 1.4.4+ live run
-  passes the full New/Recall/Read/Supersede/Skip matrix.
+- Keep the authenticated Hermes/OpenRouter native Write matrix in the release checks; ordinary CI
+  exercises the same process, stdio MCP, Store, provenance, Watermark, and fail-closed path with a
+  deterministic Host.
 - Harness Claude Code runs with tools enabled still load the user's MCP servers; on a machine
   with many servers their tool definitions alone overflow Haiku's context, and any memory-like
   server contaminates attribution. Decide strict MCP for harness runs and record the change in

@@ -40,18 +40,29 @@ def _overrides(command):
     return tomllib.loads("\n".join(pairs))
 
 
-def test_claude_codex_and_muse_can_run_write_tools_over_mcp():
+def test_supported_hosts_can_run_write_tools_over_mcp():
     supported = {name for name, dialect in hosts.DIALECTS.items() if dialect.supports_tools}
-    assert supported == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE}
+    assert supported == {
+        hosts.HOST_CLAUDE_CODE,
+        hosts.HOST_CODEX,
+        hosts.HOST_HERMES,
+        hosts.HOST_MUSE_CODE,
+    }
 
 
-def test_claude_code_codex_and_muse_use_native_write_tools_by_default():
+def test_supported_hosts_use_native_write_tools_by_default():
     defaults = {name for name, dialect in hosts.DIALECTS.items() if dialect.tools_by_default}
-    assert defaults == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE}
+    assert defaults == {
+        hosts.HOST_CLAUDE_CODE,
+        hosts.HOST_CODEX,
+        hosts.HOST_HERMES,
+        hosts.HOST_MUSE_CODE,
+    }
 
 
 @pytest.mark.parametrize(
-    "name", [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE]
+    "name",
+    [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_HERMES, hosts.HOST_MUSE_CODE],
 )
 def test_tool_commands_keep_native_memory_off(name, tmp_path):
     command = _command(name, tmp_path)
@@ -100,6 +111,39 @@ def test_codex_turns_off_local_execution(tmp_path):
     assert {"shell_tool", "unified_exec", "multi_agent", "plugins", "apps"} <= disabled
     assert "--add-dir" not in command
     assert SYSTEM not in " ".join(command)
+
+
+def test_hermes_selects_only_the_isolated_write_server(tmp_path):
+    command = _command(hosts.HOST_HERMES, tmp_path)
+
+    assert command[1:3] == ["chat", "--oneshot"]
+    assert _after(command, "--toolsets") == hosts.HERMES_WRITE_SERVER_NAME
+    assert _after(command, "--max-turns") == str(hosts.HERMES_NATIVE_MAX_TURNS)
+    assert "--query-file" in command
+    assert "--ignore-rules" in command
+    assert "--ignore-user-config" not in command
+    assert "--safe-mode" not in command
+    assert "terminal" not in command
+    assert SYSTEM not in " ".join(command)
+
+
+def test_hermes_openrouter_keeps_the_publisher_qualified_model(tmp_path):
+    spec = hosts.HostSpec(
+        name=hosts.HOST_HERMES,
+        binary="hermes",
+        provider="openrouter",
+        model="meta/muse-spark-1.3-contributor",
+    )
+    command = hosts.DIALECTS[hosts.HOST_HERMES].tool_command(
+        spec,
+        system_prompt=SYSTEM,
+        instructions_file=tmp_path / "instructions.md",
+        server=SERVER,
+        answer_file=tmp_path / "answer.txt",
+    )
+
+    assert _after(command, "--provider") == "openrouter"
+    assert _after(command, "--model") == "meta/muse-spark-1.3-contributor"
 
 
 def test_muse_turns_off_unrelated_tools_and_keeps_the_sandbox(tmp_path):

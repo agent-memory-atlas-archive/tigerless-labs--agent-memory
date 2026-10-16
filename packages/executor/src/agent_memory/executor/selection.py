@@ -40,6 +40,10 @@ def resolve(
         config,
         reasoner=policy.reasoner or config.reasoner,
         host=policy.host or config.host,
+        host_provider=policy.host_provider or config.host_provider,
+        host_allow_data_training=(
+            policy.host_allow_data_training or config.host_allow_data_training
+        ),
         host_model=policy.host_model or config.host_model,
         model=policy.model or config.model,
         endpoint=policy.endpoint or config.endpoint,

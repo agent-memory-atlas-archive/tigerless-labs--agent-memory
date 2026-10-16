@@ -31,6 +31,8 @@ def test_defaults_are_complete_and_self_consistent():
     assert config.storage.max_depth >= len(("type", "file"))
     assert config.executor.reasoner == REASONER_HOST
     assert config.executor.project == ""
+    assert config.executor.host_provider == ""
+    assert config.executor.host_allow_data_training is False
     assert config.executor.tool_mode == TOOL_MODE_AUTO
     assert config.executor.write.reasoner == ""
     assert config.executor.write.host == ""
@@ -57,6 +59,8 @@ def test_config_round_trips_through_disk(tmp_path):
     original.index.vector_model = "test/model-v2"
     original.executor.write.reasoner = "host"
     original.executor.write.host = "muse-code"
+    original.executor.write.host_provider = "openrouter"
+    original.executor.write.host_allow_data_training = True
     original.executor.write.tool_mode = TOOL_MODE_NATIVE
     original.executor.manage.reasoner = "endpoint"
     original.executor.manage.project = "user-project"
@@ -69,6 +73,8 @@ def test_config_round_trips_through_disk(tmp_path):
     assert reloaded.index.vector_enabled is True
     assert reloaded.index.vector_model == "test/model-v2"
     assert reloaded.executor.write.host == "muse-code"
+    assert reloaded.executor.write.host_provider == "openrouter"
+    assert reloaded.executor.write.host_allow_data_training is True
     assert reloaded.executor.write.tool_mode == TOOL_MODE_NATIVE
     assert reloaded.executor.manage.reasoner == "endpoint"
     assert reloaded.executor.manage.project == "user-project"
