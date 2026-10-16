@@ -25,6 +25,7 @@ from collections.abc import Callable
 from agent_memory.core import observation
 from agent_memory.core.config import MUSE_SETTINGS_ENV_VAR
 
+from . import muse_namespaces
 from .credentials import VertexCredentials
 
 HOST_CLAUDE_CODE = "claude-code"
@@ -68,6 +69,10 @@ CODEX_DISABLED_FEATURES = (
     "image_generation",
     "goals",
 )
+MUSE_TOOLSET_SETTING = "run.toolset"
+MUSE_NATIVE_WRITE_REQUIREMENT = "Muse native Write tools require Muse Code 1.4.4 or newer"
+MUSE_RUNTIME_TMPDIR = "/var/tmp"
+MUSE_NATIVE_MAX_MODEL_STEPS = 8
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,6 +126,7 @@ class Dialect:
 
     prompt_on_stdin = True
     supports_tools = False
+    tools_by_default = False
 
     def tool_command(
         self,
@@ -173,6 +179,7 @@ class ClaudeCodeDialect(Dialect):
     """Its memory is the Write tool aimed at ~/.claude/projects/<cwd>/memory/."""
 
     supports_tools = True
+    tools_by_default = True
 
     def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
         configured = {
@@ -236,6 +243,7 @@ class CodexDialect(Dialect):
     transcript, so the final message is read from the file the host writes it to."""
 
     supports_tools = True
+    tools_by_default = True
 
     def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
         prefix = f"mcp_servers.{server.name}"
@@ -351,6 +359,38 @@ class HermesDialect(Dialect):
 
 class MuseCodeDialect(Dialect):
     """Muse's headless transport: JSONL out, prompt file in, sandbox kept on."""
+
+    supports_tools = True
+    tools_by_default = True
+
+    def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
+        selected = [f"mcp__{server.name}__{tool}" for tool in server.tools]
+        command = [
+            spec.binary,
+            "exec",
+            "-c",
+            f"{MUSE_TOOLSET_SETTING}={json.dumps(selected)}",
+            "--json",
+            "--no-foreign-personal-context",
+            "--disable-reminders",
+            "--no-session-log",
+            "--disable-shell",
+            "--disable-web-tools",
+            "--disable-write",
+            "--approval-mode",
+            "never",
+            "--max-model-steps",
+            str(MUSE_NATIVE_MAX_MODEL_STEPS),
+            "--prompt-file",
+            PROMPT_PLACEHOLDER,
+            "--workspace",
+            str(answer_file.parent.resolve()),
+        ]
+        if spec.model:
+            command += ["--model", spec.model]
+        if spec.reasoning_effort:
+            command += ["--reasoning-effort", spec.reasoning_effort]
+        return command
 
     def command(
         self,
@@ -511,7 +551,7 @@ class Host:
         last = HostResult(text="", ok=False, seconds=0.0, error="not attempted")
         for number in range(self.spec.attempts):
             last = attempt()
-            if last.ok:
+            if last.ok or last.error == MUSE_NATIVE_WRITE_REQUIREMENT:
                 return last
             if number + 1 < self.spec.attempts:
                 time.sleep(self.spec.retry_backoff_seconds * (number + 1))
@@ -536,14 +576,34 @@ class Host:
                 server=server,
                 answer_file=answer_file,
             )
-            return self._invoke(
-                command,
-                prompt,
-                self._environment(None, environment),
-                scratch_path,
-                answer_file,
-                require_answer=False,
-            )
+            settings = None
+            if self.spec.name == HOST_MUSE_CODE:
+                environment = self._isolated_muse_environment(environment, scratch_path)
+                # Muse 1.4.9 rejects its process-lifetime tool-output root when TMPDIR and the
+                # workspace share the /tmp tree. Muse creates and cleans its own unique child.
+                environment["TMPDIR"] = MUSE_RUNTIME_TMPDIR
+                self._stage_muse_tool_server(environment, server)
+                settings = (
+                    pathlib.Path(environment["XDG_CONFIG_HOME"]) / "muse" / "settings.json"
+                )
+                command, prompt = self.dialect.invocation(
+                    command, prompt, system_prompt, scratch_path
+                )
+
+            def invoke() -> HostResult:
+                return self._invoke(
+                    command,
+                    prompt,
+                    self._environment(None, environment),
+                    scratch_path,
+                    answer_file,
+                    require_answer=False,
+                )
+
+            if settings is not None:
+                with muse_namespaces.for_muse_settings(settings):
+                    return invoke()
+            return invoke()
 
     def _attempt(
         self,
@@ -640,6 +700,29 @@ class Host:
         target.parent.mkdir(parents=True)
         target.write_text(json.dumps(routing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    @staticmethod
+    def _stage_muse_tool_server(environment: dict[str, str], server: ToolServer) -> None:
+        config_home = pathlib.Path(environment["XDG_CONFIG_HOME"])
+        target = config_home / "muse" / "settings.json"
+        try:
+            settings = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        settings["schema_version"] = 1
+        settings["mcp_servers"] = {
+            server.name: {
+                "transport": "stdio",
+                "command": server.command,
+                "args": list(server.args),
+                "enabled": True,
+                "mode": "required",
+            }
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     def _invoke(
         self,
         command: list[str],
@@ -697,6 +780,12 @@ class Host:
         )
         if completed.returncode != 0:
             detail = (completed.stderr.strip() or completed.stdout.strip())[:ERROR_EXCERPT]
+            if (
+                self.spec.name == HOST_MUSE_CODE
+                and MUSE_TOOLSET_SETTING in " ".join(command)
+                and ("unexpected argument '-c'" in detail or "unknown option" in detail)
+            ):
+                detail = MUSE_NATIVE_WRITE_REQUIREMENT
             return HostResult("", False, elapsed, detail or "non-zero exit with no output")
         text = self.dialect.answer(completed.stdout, answer_file)
         if require_answer and self.spec.name in (HOST_CODEX, HOST_MUSE_CODE) and not text:

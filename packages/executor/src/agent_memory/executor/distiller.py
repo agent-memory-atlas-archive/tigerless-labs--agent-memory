@@ -8,7 +8,14 @@ keep the text protocol.
 
 from __future__ import annotations
 
-from agent_memory.core.config import REASONER_ENDPOINT, REASONER_HOST, ExecutorConfig
+from agent_memory.core.config import (
+    REASONER_ENDPOINT,
+    REASONER_HOST,
+    TOOL_MODE_AUTO,
+    TOOL_MODE_NATIVE,
+    TOOL_MODE_TEXT,
+    ExecutorConfig,
+)
 from agent_memory.core.errors import ReasonerUnavailableError
 
 from .credentials import VertexCredentials
@@ -19,7 +26,19 @@ from .reasoners import EndpointReasoner, HostReasoner, ToolHostReasoner
 def distiller(config: ExecutorConfig) -> EndpointReasoner | HostReasoner:
     if config.reasoner == REASONER_HOST:
         dialect = DIALECTS.get(config.host)
-        speaks_tools = dialect is not None and dialect.supports_tools
+        mode = config.tool_mode or TOOL_MODE_AUTO
+        if mode not in (TOOL_MODE_AUTO, TOOL_MODE_NATIVE, TOOL_MODE_TEXT):
+            raise ReasonerUnavailableError(f"unsupported Write tool mode {mode!r}")
+        if mode == TOOL_MODE_NATIVE and (dialect is None or not dialect.supports_tools):
+            raise ReasonerUnavailableError(
+                f"host reasoner {config.host!r} does not support native Write tools"
+            )
+        speaks_tools = mode == TOOL_MODE_NATIVE or (
+            mode == TOOL_MODE_AUTO
+            and dialect is not None
+            and dialect.supports_tools
+            and dialect.tools_by_default
+        )
         chosen = ToolHostReasoner if speaks_tools else HostReasoner
         return chosen.for_host(config.host, model=config.host_model)
     if config.reasoner == REASONER_ENDPOINT:

@@ -129,7 +129,7 @@ def test_the_default_executor_reasons_through_the_host_cli():
     assert chosen.host.spec.name == "codex"
 
 
-def test_hosts_with_an_mcp_posture_negotiate_with_tools_and_the_rest_keep_text():
+def test_hosts_with_a_default_mcp_posture_negotiate_with_tools_and_the_rest_keep_text():
     from agent_memory.core.config import ExecutorConfig
     from agent_memory.core.reasoning import ToolReasoner
     from agent_memory.executor import distiller
@@ -137,9 +137,43 @@ def test_hosts_with_an_mcp_posture_negotiate_with_tools_and_the_rest_keep_text()
 
     for name in BINARIES:
         chosen = distiller.distiller(ExecutorConfig(host=name))
-        assert isinstance(chosen, ToolReasoner) == DIALECTS[name].supports_tools, name
+        assert isinstance(chosen, ToolReasoner) == DIALECTS[name].tools_by_default, name
         assert callable(chosen)
     assert isinstance(distiller.distiller(ExecutorConfig(reasoner="endpoint")), ToolReasoner)
+
+
+def test_muse_native_write_tools_are_automatic_and_text_can_be_forced():
+    from agent_memory.core.config import TOOL_MODE_TEXT, ExecutorConfig
+    from agent_memory.core.reasoning import ToolReasoner
+    from agent_memory.executor import distiller
+    from agent_memory.executor.hosts import HOST_MUSE_CODE
+
+    muse = distiller.distiller(ExecutorConfig(host=HOST_MUSE_CODE))
+    muse_text = distiller.distiller(
+        ExecutorConfig(host=HOST_MUSE_CODE, tool_mode=TOOL_MODE_TEXT)
+    )
+
+    assert isinstance(muse, ToolReasoner)
+    assert not isinstance(muse_text, ToolReasoner)
+
+
+def test_native_write_tools_fail_closed_for_a_host_without_a_tool_posture():
+    from agent_memory.core.config import TOOL_MODE_NATIVE, ExecutorConfig
+    from agent_memory.core.errors import ReasonerUnavailableError
+    from agent_memory.executor import distiller
+    from agent_memory.executor.hosts import HOST_HERMES
+
+    with pytest.raises(ReasonerUnavailableError, match="does not support native Write tools"):
+        distiller.distiller(ExecutorConfig(host=HOST_HERMES, tool_mode=TOOL_MODE_NATIVE))
+
+
+def test_an_unknown_write_tool_mode_is_not_silently_downgraded():
+    from agent_memory.core.config import ExecutorConfig
+    from agent_memory.core.errors import ReasonerUnavailableError
+    from agent_memory.executor import distiller
+
+    with pytest.raises(ReasonerUnavailableError, match="unsupported Write tool mode"):
+        distiller.distiller(ExecutorConfig(host="muse-code", tool_mode="guess"))
 
 
 def test_an_executor_configured_for_an_endpoint_uses_it():

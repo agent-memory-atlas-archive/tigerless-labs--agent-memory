@@ -1,13 +1,16 @@
 """End to end and offline: a fake host CLI starts the configured MCP adapter and drives it."""
 
 import json
+import os
 import pathlib
 import sys
 
 import pytest
 from agent_memory.core import distill, sessions, toolkit
+from agent_memory.core.config import ExecutorConfig
 from agent_memory.core.errors import ValidationError
 from agent_memory.core.watermark import Watermark
+from agent_memory.executor import distiller as executor_distiller
 from agent_memory.executor import hosts
 from agent_memory.executor.reasoners import ToolHostReasoner
 
@@ -15,15 +18,35 @@ FAKE_HOST = """#!{python}
 import json, os, subprocess, sys, tomllib
 
 argv = sys.argv[1:]
-prompt = sys.stdin.read()
+settings = None
 
 def after(flag):
     return argv[argv.index(flag) + 1]
 
-if "--mcp-config" in argv:
+if "--version" in argv:
+    print("Muse Code 1.4.4")
+    raise SystemExit(0)
+
+count_path = os.environ.get("FAKE_HOST_COUNT")
+if count_path:
+    try:
+        count = int(open(count_path, encoding="utf-8").read())
+    except (FileNotFoundError, ValueError):
+        count = 0
+    open(count_path, "w", encoding="utf-8").write(str(count + 1))
+
+if "--prompt-file" in argv:
+    prompt = open(after("--prompt-file"), encoding="utf-8").read()
+    settings_path = os.path.join(os.environ["XDG_CONFIG_HOME"], "muse", "settings.json")
+    settings = json.load(open(settings_path, encoding="utf-8"))
+    server = next(iter(settings["mcp_servers"].values()))
+    system = prompt
+elif "--mcp-config" in argv:
+    prompt = sys.stdin.read()
     server = next(iter(json.loads(after("--mcp-config"))["mcpServers"].values()))
     system = after("--system-prompt")
 else:
+    prompt = sys.stdin.read()
     overrides = tomllib.loads(
         "\\n".join(argv[i + 1] for i, part in enumerate(argv) if part == "-c")
     )
@@ -51,10 +74,14 @@ child.wait()
 
 with open(os.environ["FAKE_HOST_LOG"], "w", encoding="utf-8") as log:
     json.dump({{"argv": argv, "stdin": prompt, "system": system, "listed": listed,
-               "replies": replies, "executor": os.environ.get("AGENT_MEMORY_EXECUTOR")}}, log)
+               "replies": replies, "executor": os.environ.get("AGENT_MEMORY_EXECUTOR"),
+               "settings": settings}}, log)
 if "--output-last-message" in argv:
     open(after("--output-last-message"), "w", encoding="utf-8").write("done")
-print("done")
+if "--json" in argv:
+    print(json.dumps({{"kind": "run_terminal", "terminal": "completed", "text": "done"}}))
+else:
+    print("done")
 """
 
 
@@ -94,7 +121,9 @@ def _supersede(handle):
     }
 
 
-@pytest.mark.parametrize("name", [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX])
+@pytest.mark.parametrize(
+    "name", [hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE]
+)
 def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_path, monkeypatch):
     old, messages = _batch(store)
     log = tmp_path / "host-log.json"
@@ -105,6 +134,8 @@ def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_pa
     ]
     monkeypatch.setenv("FAKE_HOST_SCRIPT", json.dumps(script))
     monkeypatch.setenv("FAKE_HOST_LOG", str(log))
+    count = tmp_path / "host-count.txt"
+    monkeypatch.setenv("FAKE_HOST_COUNT", str(count))
 
     report = distill.distill(
         store, "boundary", messages, _reasoner(name, _fake_host(tmp_path, name))
@@ -117,21 +148,110 @@ def test_a_host_distills_a_batch_through_the_toolkit_adapter(name, store, tmp_pa
     assert set(seen["listed"]) == {toolkit.TOOL_RECALL, toolkit.TOOL_READ, toolkit.TOOL_SUBMIT}
     assert all(reply["result"]["isError"] is False for reply in seen["replies"])
     assert "our queue timeout is 30 seconds" in seen["stdin"].lower()
-    assert "our queue timeout is 30 seconds" not in seen["system"].lower()
+    assert ("our queue timeout is 30 seconds" in seen["system"].lower()) == (
+        name == hosts.HOST_MUSE_CODE
+    )
     assert toolkit.TOOL_SUBMIT in seen["system"]
     assert seen["executor"] == "1"
+    assert count.read_text(encoding="utf-8") == "1"
+    if name == hosts.HOST_MUSE_CODE:
+        assert "run.toolset" not in seen["settings"]
+        override = seen["argv"][seen["argv"].index("-c") + 1]
+        assert json.loads(override.removeprefix("run.toolset=")) == [
+            "mcp__memory__recall",
+            "mcp__memory__read",
+            "mcp__memory__submit_operations",
+        ]
+        assert set(seen["settings"]["mcp_servers"]) == {"memory"}
 
 
-def test_a_host_run_without_a_submission_writes_nothing(store, tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", [hosts.HOST_CODEX, hosts.HOST_MUSE_CODE])
+def test_a_host_run_without_a_submission_writes_nothing(
+    name, store, tmp_path, monkeypatch
+):
     old, messages = _batch(store)
     monkeypatch.setenv(
         "FAKE_HOST_SCRIPT", json.dumps([[toolkit.TOOL_RECALL, {toolkit.ARG_QUERY: "queue"}]])
     )
     monkeypatch.setenv("FAKE_HOST_LOG", str(tmp_path / "host-log.json"))
-    reasoner = _reasoner(hosts.HOST_CODEX, _fake_host(tmp_path, hosts.HOST_CODEX))
+    reasoner = _reasoner(name, _fake_host(tmp_path, name))
     before = sorted(pathlib.Path(store.root).rglob("*.md"))
     with pytest.raises(ValidationError):
         distill.distill(store, "boundary", messages, reasoner)
     assert sorted(pathlib.Path(store.root).rglob("*.md")) == before
     assert store.find(old.name).is_active()
     assert Watermark(store.layout, store.clock).read("boundary").distilled == 0
+
+
+def test_muse_auto_native_write_creates_a_new_memory_with_source_provenance(
+    store, tmp_path, monkeypatch
+):
+    pointer = store.archive.append_session(
+        "muse-new", ["user: The deploy window is Friday.", "assistant: Noted."]
+    )
+    messages = sessions.resolve(store.layout, pointer)
+    operation = {
+        "type": "fact",
+        "op": "new",
+        "fields": {"project": "default", "subject": "deploy window"},
+        "abstract": "The deploy window is Friday",
+        "body": "Deployments run on Friday.",
+        "provenance": ["0"],
+    }
+    log = tmp_path / "muse-new-log.json"
+    monkeypatch.setenv(
+        "FAKE_HOST_SCRIPT",
+        json.dumps([[toolkit.TOOL_SUBMIT, {toolkit.ARG_OPERATIONS: [operation]}]]),
+    )
+    monkeypatch.setenv("FAKE_HOST_LOG", str(log))
+    binary = _fake_host(tmp_path, hosts.BINARIES[hosts.HOST_MUSE_CODE][0])
+    monkeypatch.setenv("PATH", str(binary.parent) + os.pathsep + os.environ["PATH"])
+    reasoner = executor_distiller.distiller(ExecutorConfig(host=hosts.HOST_MUSE_CODE))
+    assert isinstance(reasoner, ToolHostReasoner)
+
+    report = distill.distill(
+        store,
+        "muse-new",
+        messages,
+        reasoner,
+    )
+
+    assert report.batches[0].written == ("deploy-window",)
+    written = store.find("deploy-window")
+    assert written is not None
+    assert written.provenance == ["sessions/muse-new#0-0"]
+
+
+def test_muse_native_write_returns_tool_errors_to_the_same_run_then_skips(
+    store, tmp_path, monkeypatch
+):
+    pointer = store.archive.append_session("muse-skip", ["user: Thanks."])
+    messages = sessions.resolve(store.layout, pointer)
+    log = tmp_path / "muse-skip-log.json"
+    script = [
+        [toolkit.TOOL_READ, {toolkit.ARG_NAME: "missing-memory"}],
+        [toolkit.TOOL_SUBMIT, {toolkit.ARG_OPERATIONS: [{"type": "fact", "op": "new"}]}],
+        [
+            toolkit.TOOL_SUBMIT,
+            {toolkit.ARG_OPERATIONS: [{"type": "fact", "op": "skip"}]},
+        ],
+    ]
+    monkeypatch.setenv("FAKE_HOST_SCRIPT", json.dumps(script))
+    monkeypatch.setenv("FAKE_HOST_LOG", str(log))
+    before = sorted(pathlib.Path(store.root).rglob("*.md"))
+
+    report = distill.distill(
+        store,
+        "muse-skip",
+        messages,
+        _reasoner(hosts.HOST_MUSE_CODE, _fake_host(tmp_path, hosts.HOST_MUSE_CODE)),
+    )
+
+    assert report.batches[0].written == ()
+    assert report.batches[0].rounds == len(script)
+    assert sorted(pathlib.Path(store.root).rglob("*.md")) == before
+    assert Watermark(store.layout, store.clock).read("muse-skip").distilled == 1
+    seen = json.loads(log.read_text(encoding="utf-8"))
+    assert seen["replies"][0]["result"]["isError"] is True
+    assert seen["replies"][1]["result"]["isError"] is True
+    assert seen["replies"][2]["result"]["isError"] is False

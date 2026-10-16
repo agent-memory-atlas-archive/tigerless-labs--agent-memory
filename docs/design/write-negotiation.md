@@ -21,10 +21,11 @@ accepted operations reach it through the single write path, and only what a chec
 siblings that collide with each other, or the Store changing underneath — falls to the repair
 path.
 
-The toolkit imposes no look budget, turn cap or forced final turn. Request and process timeouts
-detect transport failure; they are not reasoning limits. Why: these are the industry-standard
-mechanics of a tool-use agent, and they let the model use its full judgement instead of a
-protocol written around its absence.
+The toolkit imposes no look budget or forced final turn. Request and process timeouts detect
+transport failure. A Host may additionally impose a declared safety bound: Muse native Write
+allows eight model steps, then fails closed if no operation was accepted. Why: these are the
+industry-standard mechanics of a tool-use agent, while a bounded third-party compatibility route
+must not retry malformed calls indefinitely.
 
 ## Two transports
 
@@ -32,12 +33,14 @@ protocol written around its absence.
 |---|---|---|
 | Model endpoint | The executor | Native function calling over a structured message history |
 | Claude Code, Codex | The host CLI, one headless run per batch | A per-batch stdio MCP adapter over the same toolkit |
+| Muse Code | The isolated host CLI, one headless run per batch | A required per-batch stdio MCP adapter selected as Muse's complete toolset |
 
-Both transports send the distillation instructions and type table as the system prompt and the
-batch's reconcile sheet and conversation as the user message, constant material first so prefixes
-stay cacheable. Neither carries tool semantics (Invariant 8). On the host transport the toolkit
-state crosses the process boundary through the batch's private scratch directory: seeded before
-the run, absorbed after it.
+The endpoint, Claude Code and Codex transports send the distillation instructions and type table
+as the system prompt and the batch's reconcile sheet and conversation as the user message,
+constant material first so prefixes stay cacheable. Muse preserves the same order in one prompt
+file because its CLI has no system-prompt replacement flag. No transport carries tool semantics
+(Invariant 8). On a host transport the toolkit state crosses the process boundary through the
+batch's private scratch directory: seeded before the run, absorbed after it.
 
 A run that ends without an accepted submission writes nothing and leaves the archive backlog and
 Watermark untouched. Host and endpoint failures follow the attribution rules in
@@ -45,3 +48,34 @@ Watermark untouched. Host and endpoint failures follow the attribution rules in
 
 Hosts without a verified MCP posture keep the line-oriented text protocol: the library runs the
 loop, parses looks and operations from plain text, and calls the same toolkit for recall and read.
+`tool_mode = "auto"` selects native tools for Muse, Claude Code, and Codex. `native` and `text`
+select a Host path explicitly; an unsupported or invalid selection fails rather than changing
+transport. Muse native mode requires 1.4.4 because
+that release added exact MCP names to `run.toolset`. Its isolated settings contain only provider
+routing and the required batch server; Shell, Web, file writes, reminders, personal context and
+session persistence are disabled. Muse has no system-prompt replacement flag, so the same system
+instructions and batch material are placed, in that order, in its one prompt file.
+
+Muse's OpenRouter route has one transport-only compatibility step. Muse 1.4.9 serializes the MCP
+catalog as a Responses API namespace, OpenRouter returns the child name plus that namespace, and
+Muse's local dispatcher looks up only a canonical flat id. During one native run, a scoped
+loopback bridge between Muse and the configured local pproxy expands each namespace child to its
+canonical `mcp__server__tool` function name. It forwards the existing bearer header, never holds a
+credential, never executes a tool, and stops with the Host run. Direct Meta routes are unchanged.
+
+## Muse live comparison
+
+An authenticated Muse Code 1.4.9 run through pproxy and
+`meta/muse-spark-1.3-contributor` exercised New, Recall/Read/Supersede, Skip, and a failed Read
+whose observation was corrected in the same native session. The full live matrix completed in
+120.93 seconds. A fixed New pair produced the same active Fact and Event with the same source
+provenance:
+
+| Mode | Wall time | Host starts | Model requests | Memory tool calls | Input / cached / output tokens | OpenRouter cost |
+|---|---:|---:|---:|---:|---:|---:|
+| Text protocol | 30.515 s | 1 | 1 | 0 | 25,794 / 0 / 3,600 | $0.0032994 |
+| Native MCP | 44.782 s | 1 | 3 | 2 | 57,716 / 37,218 / 2,960 | $0.0027162 |
+
+This one New sample does not show a latency win: native execution was 14.267 seconds slower. It
+did perform a Recall before submitting and cost less in the observed run because later requests
+reused cached input. Tool calls, not model requests, remain the core's `rounds` metric.

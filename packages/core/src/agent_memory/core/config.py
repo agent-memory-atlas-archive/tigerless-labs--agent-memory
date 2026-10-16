@@ -14,6 +14,9 @@ EXECUTOR_ENV_VAR = "AGENT_MEMORY_EXECUTOR"
 MUSE_SETTINGS_ENV_VAR = "AGENT_MEMORY_MUSE_SETTINGS"
 REASONER_HOST = "host"
 REASONER_ENDPOINT = "endpoint"
+TOOL_MODE_AUTO = "auto"
+TOOL_MODE_NATIVE = "native"
+TOOL_MODE_TEXT = "text"
 COORDINATION_LOCK_POLL_SECONDS = 0.02
 DREAM_CLAIM_ID_LENGTH = 20
 DREAM_ERROR_MAX_CHARS = 1000
@@ -146,6 +149,7 @@ class OperationExecutorConfig:
     project: str = ""
     location: str = ""
     timeout_seconds: float = 0.0
+    tool_mode: str = ""
 
 
 @dataclasses.dataclass
@@ -158,6 +162,7 @@ class ExecutorConfig:
     project: str = ""
     location: str = "global"
     timeout_seconds: float = 120.0
+    tool_mode: str = TOOL_MODE_AUTO
     command: str = "mem distill"
     write: OperationExecutorConfig = dataclasses.field(default_factory=OperationExecutorConfig)
     manage: OperationExecutorConfig = dataclasses.field(default_factory=OperationExecutorConfig)

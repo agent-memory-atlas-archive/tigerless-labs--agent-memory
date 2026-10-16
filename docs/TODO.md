@@ -25,8 +25,9 @@
 - Persist a per-run Write trace (messages, tool calls, operations, usage), add explicit cache
   breakpoints for endpoints that need them, a context provider per job, and a durable job queue
   in place of the fire-and-forget launch.
-- Move Hermes and Muse Code onto the MCP toolkit transport once their tools-only posture passes a
-  live preflight; until then they keep the text protocol.
+- Keep Hermes on the text protocol until its own CLI/SDK tool posture is verified. Muse now has an
+  explicit native MCP mode, but `auto` stays on text until an authenticated Muse 1.4.4+ live run
+  passes the full New/Recall/Read/Supersede/Skip matrix.
 - Harness Claude Code runs with tools enabled still load the user's MCP servers; on a machine
   with many servers their tool definitions alone overflow Haiku's context, and any memory-like
   server contaminates attribution. Decide strict MCP for harness runs and record the change in
@@ -50,8 +51,11 @@
 
 ## Muse Code follow-ups
 
-- Run the isolated Muse shell, lifecycle hook, and stdio MCP sandbox preflight on an installed,
-  authenticated Muse build, then record the observed compatibility result.
+- Muse Code 1.4.9 passed the OpenRouter/pproxy native Write matrix on 2026-10-16: New,
+  Recall/Read/Supersede, Skip, tool-error observation, Store/Provenance, and Watermark. The live
+  test is `AGENT_MEMORY_LIVE_MUSE_NATIVE=1 uv run pytest -q
+  tests/system/test_live_muse_native_write.py`. Keep this opt-in credentialed check in the release
+  matrix; ordinary CI covers the same MCP/Store chain with the deterministic Host.
 - Run Muse-to-Muse, Muse-to-Codex, and Codex-to-Muse portability smoke before the full four-host
   matrix.
 - Map `MUSE_SESSION_ID` into shared MCP source context only if provenance can accept it without a
