@@ -8,30 +8,36 @@ import time
 
 import pytest
 from agent_memory.core import distill, reconcile, sessions, toolkit
-from agent_memory.core.config import Config
+from agent_memory.core.config import Config, ExecutorConfig
 from agent_memory.core.store import Store
 from agent_memory.core.watermark import Watermark
+from agent_memory.executor import distiller as executor_distiller
 from agent_memory.executor.hosts import HOST_MUSE_CODE
 from agent_memory.executor.reasoners import ToolHostReasoner
 
 
-class RecordingMuse(ToolHostReasoner):
-    record: dict[str, object] | None = None
-    seconds = 0.0
+class RecordingMuse:
+    def __init__(self, delegate: ToolHostReasoner):
+        self.delegate = delegate
+        self.record: dict[str, object] | None = None
+        self.seconds = 0.0
+
+    def __call__(self, prompt: str) -> str:
+        return self.delegate(prompt)
 
     def converse(self, instructions, material, write_toolkit):
         started = time.monotonic()
         try:
-            return super().converse(instructions, material, write_toolkit)
+            return self.delegate.converse(instructions, material, write_toolkit)
         finally:
             self.seconds = time.monotonic() - started
             self.record = write_toolkit.record()
 
 
 def _reasoner() -> RecordingMuse:
-    chosen = RecordingMuse.for_host(HOST_MUSE_CODE)
-    assert isinstance(chosen, RecordingMuse)
-    return chosen
+    chosen = executor_distiller.distiller(ExecutorConfig(host=HOST_MUSE_CODE))
+    assert isinstance(chosen, ToolHostReasoner)
+    return RecordingMuse(chosen)
 
 
 def _messages(store: Store, session: str, lines: list[str]):

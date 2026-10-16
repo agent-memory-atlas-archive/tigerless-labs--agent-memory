@@ -142,17 +142,19 @@ def test_hosts_with_a_default_mcp_posture_negotiate_with_tools_and_the_rest_keep
     assert isinstance(distiller.distiller(ExecutorConfig(reasoner="endpoint")), ToolReasoner)
 
 
-def test_muse_native_write_tools_are_explicitly_opted_in_and_text_can_be_forced():
-    from agent_memory.core.config import TOOL_MODE_NATIVE, TOOL_MODE_TEXT, ExecutorConfig
+def test_muse_native_write_tools_are_automatic_and_text_can_be_forced():
+    from agent_memory.core.config import TOOL_MODE_TEXT, ExecutorConfig
     from agent_memory.core.reasoning import ToolReasoner
     from agent_memory.executor import distiller
-    from agent_memory.executor.hosts import HOST_CODEX, HOST_MUSE_CODE
+    from agent_memory.executor.hosts import HOST_MUSE_CODE
 
-    muse = distiller.distiller(ExecutorConfig(host=HOST_MUSE_CODE, tool_mode=TOOL_MODE_NATIVE))
-    codex = distiller.distiller(ExecutorConfig(host=HOST_CODEX, tool_mode=TOOL_MODE_TEXT))
+    muse = distiller.distiller(ExecutorConfig(host=HOST_MUSE_CODE))
+    muse_text = distiller.distiller(
+        ExecutorConfig(host=HOST_MUSE_CODE, tool_mode=TOOL_MODE_TEXT)
+    )
 
     assert isinstance(muse, ToolReasoner)
-    assert not isinstance(codex, ToolReasoner)
+    assert not isinstance(muse_text, ToolReasoner)
 
 
 def test_native_write_tools_fail_closed_for_a_host_without_a_tool_posture():

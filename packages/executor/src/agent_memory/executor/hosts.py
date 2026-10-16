@@ -361,6 +361,7 @@ class MuseCodeDialect(Dialect):
     """Muse's headless transport: JSONL out, prompt file in, sandbox kept on."""
 
     supports_tools = True
+    tools_by_default = True
 
     def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
         selected = [f"mcp__{server.name}__{tool}" for tool in server.tools]

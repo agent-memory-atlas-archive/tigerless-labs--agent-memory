@@ -40,14 +40,14 @@ def _overrides(command):
     return tomllib.loads("\n".join(pairs))
 
 
-def test_claude_codex_and_opted_in_muse_can_run_write_tools_over_mcp():
+def test_claude_codex_and_muse_can_run_write_tools_over_mcp():
     supported = {name for name, dialect in hosts.DIALECTS.items() if dialect.supports_tools}
     assert supported == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE}
 
 
-def test_only_claude_code_and_codex_use_native_write_tools_by_default():
+def test_claude_code_codex_and_muse_use_native_write_tools_by_default():
     defaults = {name for name, dialect in hosts.DIALECTS.items() if dialect.tools_by_default}
-    assert defaults == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX}
+    assert defaults == {hosts.HOST_CLAUDE_CODE, hosts.HOST_CODEX, hosts.HOST_MUSE_CODE}
 
 
 @pytest.mark.parametrize(

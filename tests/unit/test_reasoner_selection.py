@@ -10,7 +10,7 @@ from agent_memory.core.config import (
 from agent_memory.core.errors import ReasonerUnavailableError
 from agent_memory.core.reasoning import ToolReasoner
 from agent_memory.executor import distiller, selection
-from agent_memory.executor.reasoners import EndpointReasoner, HostReasoner
+from agent_memory.executor.reasoners import EndpointReasoner
 
 
 def test_default_write_uses_the_source_host_while_manage_uses_the_legacy_executor():
@@ -103,13 +103,13 @@ def test_resolved_host_and_endpoint_policies_build_only_the_selected_transport()
     write = distiller.distiller(selection.resolve(executor, selection.WRITE, source_host="codex"))
     manage = distiller.distiller(selection.resolve(executor, selection.MANAGE))
 
-    assert isinstance(write, HostReasoner)
+    assert isinstance(write, ToolReasoner)
     assert write.host.spec.name == "muse-code"
     assert isinstance(manage, EndpointReasoner)
     assert manage.base_url == "https://manage.example/v1"
 
 
-def test_write_tool_mode_is_operation_scoped_and_muse_native_is_opt_in():
+def test_write_tool_mode_is_operation_scoped_and_muse_native_can_be_explicit():
     executor = Config.default().executor
     executor.write = OperationExecutorConfig(
         reasoner="host", host="muse-code", tool_mode=TOOL_MODE_NATIVE

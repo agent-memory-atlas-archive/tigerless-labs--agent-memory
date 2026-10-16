@@ -233,7 +233,7 @@ which source session is archived or cited:
 [executor.write]
 reasoner = "host"
 host = "muse-code" # or "source", "codex", or "claude-code"
-tool_mode = "native" # opt in to Muse's per-batch MCP tool loop; default is "auto"
+tool_mode = "auto" # Muse, Codex, and Claude use native tools; use "text" for compatibility
 
 [executor.manage]
 reasoner = "host"
@@ -248,14 +248,14 @@ marker that prevents recursive capture.
 
 Write runs the reasoner as a standard tool-use agent over one toolkit — `recall`, `read`, and
 `submit_operations`. An endpoint reasoner drives that loop through native function calling.
-Claude Code and Codex run their own loop in one headless process per
-batch by default: the toolkit is served by a per-batch stdio MCP server, their built-in tools,
-user configuration and native memory are off, and the distillation instructions replace their
-system prompt. Muse Code keeps the line-oriented text protocol under `tool_mode = "auto"`; an
-explicit `tool_mode = "native"` uses one isolated Muse process with only that batch's MCP
-`recall`, `read`, and `submit_operations` tools. Muse native mode requires Muse Code 1.4.4 or
-newer, caps a run at eight model steps, and fails explicitly on older versions; it never falls
-back to text. When Muse is routed through the supported local pproxy bridge, a scoped loopback
+Claude Code, Codex, and Muse Code run their own loop in one headless process per batch by
+default: the toolkit is served by a per-batch stdio MCP server, their built-in tools, user
+configuration and native memory are off, and the distillation instructions replace their system
+prompt where the Host supports replacement. Muse uses one combined prompt file and an isolated
+process with only that batch's MCP `recall`, `read`, and `submit_operations` tools. Muse native
+mode requires Muse Code 1.4.4 or newer, caps a run at eight model steps, and fails explicitly on
+older versions; it never falls back to text. When Muse is routed through the supported local
+pproxy bridge, a scoped loopback
 adapter expands Responses API namespace tools to Muse's canonical MCP ids; it neither executes
 tools nor holds credentials. `tool_mode = "text"`
 forces the compatibility protocol for a Host. Hermes remains on that protocol. A run that ends
@@ -408,8 +408,9 @@ verified on a machine with Muse Code installed and authenticated. Muse 1.4.3 doe
 exact `run.toolset` MCP selection required by native Write mode. Muse 1.4.9 plus OpenRouter emits
 Responses namespace calls as a namespace and child name while Muse dispatches canonical flat MCP
 ids; native Write bridges that local pproxy transport for the duration of the run. The live matrix
-is opt-in with `AGENT_MEMORY_LIVE_MUSE_NATIVE=1` and covers New, Recall/Read/Supersede, Skip, and
-tool-error observation. Lifecycle hooks and SessionStart injection do not depend on native Write.
+is opt-in with `AGENT_MEMORY_LIVE_MUSE_NATIVE=1`, selects Muse through the default `auto` posture,
+and covers New, Recall/Read/Supersede, Skip, and tool-error observation. Lifecycle hooks and
+SessionStart injection do not depend on native Write.
 Echo or mocked providers do not count as live E2E evidence.
 
 ## Let it sleep

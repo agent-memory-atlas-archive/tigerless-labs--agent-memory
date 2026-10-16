@@ -1,13 +1,16 @@
 """End to end and offline: a fake host CLI starts the configured MCP adapter and drives it."""
 
 import json
+import os
 import pathlib
 import sys
 
 import pytest
 from agent_memory.core import distill, sessions, toolkit
+from agent_memory.core.config import ExecutorConfig
 from agent_memory.core.errors import ValidationError
 from agent_memory.core.watermark import Watermark
+from agent_memory.executor import distiller as executor_distiller
 from agent_memory.executor import hosts
 from agent_memory.executor.reasoners import ToolHostReasoner
 
@@ -180,7 +183,7 @@ def test_a_host_run_without_a_submission_writes_nothing(
     assert Watermark(store.layout, store.clock).read("boundary").distilled == 0
 
 
-def test_muse_native_write_creates_a_new_memory_with_source_provenance(
+def test_muse_auto_native_write_creates_a_new_memory_with_source_provenance(
     store, tmp_path, monkeypatch
 ):
     pointer = store.archive.append_session(
@@ -201,12 +204,16 @@ def test_muse_native_write_creates_a_new_memory_with_source_provenance(
         json.dumps([[toolkit.TOOL_SUBMIT, {toolkit.ARG_OPERATIONS: [operation]}]]),
     )
     monkeypatch.setenv("FAKE_HOST_LOG", str(log))
+    binary = _fake_host(tmp_path, hosts.BINARIES[hosts.HOST_MUSE_CODE][0])
+    monkeypatch.setenv("PATH", str(binary.parent) + os.pathsep + os.environ["PATH"])
+    reasoner = executor_distiller.distiller(ExecutorConfig(host=hosts.HOST_MUSE_CODE))
+    assert isinstance(reasoner, ToolHostReasoner)
 
     report = distill.distill(
         store,
         "muse-new",
         messages,
-        _reasoner(hosts.HOST_MUSE_CODE, _fake_host(tmp_path, hosts.HOST_MUSE_CODE)),
+        reasoner,
     )
 
     assert report.batches[0].written == ("deploy-window",)

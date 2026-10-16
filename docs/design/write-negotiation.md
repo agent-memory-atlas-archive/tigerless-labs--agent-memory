@@ -33,7 +33,7 @@ must not retry malformed calls indefinitely.
 |---|---|---|
 | Model endpoint | The executor | Native function calling over a structured message history |
 | Claude Code, Codex | The host CLI, one headless run per batch | A per-batch stdio MCP adapter over the same toolkit |
-| Muse Code (`tool_mode = "native"`) | The isolated host CLI, one headless run per batch | A required per-batch stdio MCP adapter selected as Muse's complete toolset |
+| Muse Code | The isolated host CLI, one headless run per batch | A required per-batch stdio MCP adapter selected as Muse's complete toolset |
 
 The endpoint, Claude Code and Codex transports send the distillation instructions and type table
 as the system prompt and the batch's reconcile sheet and conversation as the user message,
@@ -48,9 +48,9 @@ Watermark untouched. Host and endpoint failures follow the attribution rules in
 
 Hosts without a verified MCP posture keep the line-oriented text protocol: the library runs the
 loop, parses looks and operations from plain text, and calls the same toolkit for recall and read.
-`tool_mode = "auto"` preserves this protocol for Muse while keeping native tools as the default
-for Claude Code and Codex. `native` and `text` select a Host path explicitly; an unsupported or
-invalid selection fails rather than changing transport. Muse native mode requires 1.4.4 because
+`tool_mode = "auto"` selects native tools for Muse, Claude Code, and Codex. `native` and `text`
+select a Host path explicitly; an unsupported or invalid selection fails rather than changing
+transport. Muse native mode requires 1.4.4 because
 that release added exact MCP names to `run.toolset`. Its isolated settings contain only provider
 routing and the required batch server; Shell, Web, file writes, reminders, personal context and
 session persistence are disabled. Muse has no system-prompt replacement flag, so the same system
