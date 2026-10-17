@@ -6,15 +6,21 @@ import dataclasses
 import os
 import pathlib
 import tomllib
+from typing import Any
 
 CONFIG_FILENAME = "config.toml"
 STORE_ENV_VAR = "AGENT_MEMORY_STORE"
 EXECUTOR_ENV_VAR = "AGENT_MEMORY_EXECUTOR"
 MUSE_SETTINGS_ENV_VAR = "AGENT_MEMORY_MUSE_SETTINGS"
-MUSE_LAUNCHER_ENV_VAR = "AGENT_MEMORY_MUSE_LAUNCHER"
-MUSE_BINARY_ENV_VAR = "AGENT_MEMORY_MUSE_BINARY"
 REASONER_HOST = "host"
 REASONER_ENDPOINT = "endpoint"
+TOOL_MODE_AUTO = "auto"
+TOOL_MODE_NATIVE = "native"
+TOOL_MODE_TEXT = "text"
+COORDINATION_LOCK_POLL_SECONDS = 0.02
+DREAM_CLAIM_ID_LENGTH = 20
+DREAM_ERROR_MAX_CHARS = 1000
+STATE_JSON_INDENT = 2
 DEFAULT_STORE = "~/agent-memory-store"
 LEGACY_KNOBS = {
     "index": frozenset({"raw_chunk_chars"}),
@@ -92,6 +98,8 @@ class RecallConfig:
 
 @dataclasses.dataclass
 class ManageConfig:
+    auto_dream: bool = True
+    claim_lease_seconds: float = 1800.0
     trigger_min_hours: float = 24.0
     trigger_min_sessions: int = 3
     cluster_min_files: int = 5
@@ -132,16 +140,36 @@ class WriteConfig:
 
 
 @dataclasses.dataclass
+class OperationExecutorConfig:
+    reasoner: str = ""
+    host: str = ""
+    host_provider: str = ""
+    host_allow_data_training: bool = False
+    host_model: str = ""
+    model: str = ""
+    endpoint: str = ""
+    project: str = ""
+    location: str = ""
+    timeout_seconds: float = 0.0
+    tool_mode: str = ""
+
+
+@dataclasses.dataclass
 class ExecutorConfig:
     reasoner: str = REASONER_HOST
     host: str = "claude-code"
+    host_provider: str = ""
+    host_allow_data_training: bool = False
     host_model: str = ""
     model: str = "google/gemini-3.7-flash"
     endpoint: str = ""
     project: str = ""
     location: str = "global"
     timeout_seconds: float = 120.0
+    tool_mode: str = TOOL_MODE_AUTO
     command: str = "mem distill"
+    write: OperationExecutorConfig = dataclasses.field(default_factory=OperationExecutorConfig)
+    manage: OperationExecutorConfig = dataclasses.field(default_factory=OperationExecutorConfig)
 
 
 @dataclasses.dataclass
@@ -170,13 +198,7 @@ class Config:
             section = getattr(config, section_name, None)
             if section is None or not dataclasses.is_dataclass(section):
                 raise ValueError(f"unknown config section: {section_name}")
-            known = {field.name for field in dataclasses.fields(section)}
-            for key, value in values.items():
-                if key in LEGACY_KNOBS.get(section_name, ()):
-                    continue
-                if key not in known:
-                    raise ValueError(f"unknown config knob: {section_name}.{key}")
-                setattr(section, key, value)
+            _load_section(section, values, section_name)
         config.validate_index()
         return config
 
@@ -241,8 +263,37 @@ def _render_toml(config: Config) -> str:
     lines: list[str] = []
     for section_field in dataclasses.fields(config):
         section = getattr(config, section_field.name)
-        lines.append(f"[{section_field.name}]")
-        for knob in dataclasses.fields(section):
-            lines.append(f"{knob.name} = {_render_value(getattr(section, knob.name))}")
-        lines.append("")
+        _render_section(lines, section_field.name, section)
     return "\n".join(lines)
+
+
+def _load_section(section: Any, values: object, path: str) -> None:
+    if not isinstance(values, dict):
+        raise ValueError(f"config section must be a table: {path}")
+    known = {field.name for field in dataclasses.fields(section)}
+    for key, value in values.items():
+        if key in LEGACY_KNOBS.get(path, ()):
+            continue
+        if key not in known:
+            raise ValueError(f"unknown config knob: {path}.{key}")
+        current = getattr(section, key)
+        if dataclasses.is_dataclass(current):
+            _load_section(current, value, f"{path}.{key}")
+        elif isinstance(value, dict) and not isinstance(current, dict):
+            raise ValueError(f"config knob must not be a table: {path}.{key}")
+        else:
+            setattr(section, key, value)
+
+
+def _render_section(lines: list[str], path: str, section: Any) -> None:
+    lines.append(f"[{path}]")
+    children: list[tuple[str, object]] = []
+    for knob in dataclasses.fields(section):
+        value = getattr(section, knob.name)
+        if dataclasses.is_dataclass(value):
+            children.append((knob.name, value))
+        else:
+            lines.append(f"{knob.name} = {_render_value(value)}")
+    lines.append("")
+    for name, child in children:
+        _render_section(lines, f"{path}.{name}", child)

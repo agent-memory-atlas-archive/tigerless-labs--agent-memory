@@ -87,14 +87,14 @@ def run(
         )
     )
     checks.extend(_reasoner_checks(store, host, environment))
-    if not (host == moments.HOST_MUSE_CODE and provider):
+    for operation in ("write", "manage"):
         checks.append(
-            _live_reasoner_check(store, host)
+            _live_reasoner_check(store, host, operation)
             if live
             else Check(
-                "LIVE_PREFLIGHT_SKIPPED",
+                f"{operation.upper()}_LIVE_PREFLIGHT_SKIPPED",
                 False,
-                "live host reasoner check was explicitly skipped",
+                f"live {operation} reasoner check was explicitly skipped",
             )
         )
     if mcp:
@@ -203,39 +203,64 @@ def _hook_checks(
 def _reasoner_checks(
     store: Store, host: str, environment: dict[str, str] | None = None
 ) -> list[Check]:
-    executor = store.config.executor
-    if executor.reasoner == "endpoint":
-        available = os.environ if environment is None else environment
-        endpoint = available.get("GEMINI_BASE_URL", "") or executor.endpoint
-        project = available.get("GOOGLE_CLOUD_PROJECT", "") or executor.project
-        api_key = available.get("GEMINI_API_KEY", "")
-        ok = bool(project or (endpoint and api_key))
-        if endpoint and api_key:
-            detail = "explicit model endpoint"
-        elif project:
-            detail = f"Vertex AI project {project}"
-        else:
-            detail = (
-                "executor.reasoner=endpoint requires a user-owned endpoint and API key or "
-                "a Google Cloud project"
+    from agent_memory.executor import selection
+    from agent_memory.executor.reasoners import HostReasoner
+
+    available = os.environ if environment is None else environment
+    checks = []
+    for operation in selection.OPERATIONS:
+        label = operation.upper()
+        try:
+            executor = selection.resolve(
+                store.config.executor,
+                operation,
+                source_host=host if operation == selection.WRITE else "",
             )
-    else:
-        ok = bool(setup.BINARIES.get(host))
-        detail = f"boundary distillation uses {host}"
-    return [Check("REASONER_AVAILABLE" if ok else "REASONER_UNAVAILABLE", ok, detail)]
+            if executor.reasoner == "endpoint":
+                endpoint = available.get("GEMINI_BASE_URL", "") or executor.endpoint
+                project = available.get("GOOGLE_CLOUD_PROJECT", "") or executor.project
+                api_key = available.get("GEMINI_API_KEY", "")
+                ok = bool(project or (endpoint and api_key))
+                if endpoint and api_key:
+                    detail = f"{operation} uses explicit model endpoint"
+                elif project:
+                    detail = f"Vertex AI project {project}"
+                else:
+                    detail = (
+                        f"{operation} endpoint reasoner requires a user-owned endpoint and "
+                        "API key or a Google Cloud project"
+                    )
+            else:
+                reasoner = HostReasoner.for_host(executor.host, model=executor.host_model)
+                ok = bool(reasoner.host.spec.binary)
+                detail = f"{operation} uses host {executor.host}"
+        except Exception as error:
+            ok = False
+            detail = f"{operation} reasoner configuration failed: {error}"
+        checks.append(
+            Check(
+                f"{label}_REASONER_AVAILABLE" if ok else f"{label}_REASONER_UNAVAILABLE",
+                ok,
+                detail,
+            )
+        )
+    return checks
 
 
-def _live_reasoner_check(store: Store, host: str) -> Check:
-    """Exercise the same executor used by boundary distillation, with one bounded attempt."""
+def _live_reasoner_check(store: Store, host: str, operation: str) -> Check:
+    """Exercise the executor selected for one channel, with one bounded attempt."""
     try:
+        from agent_memory.executor import selection
         from agent_memory.executor.distiller import distiller
         from agent_memory.executor.reasoners import HostReasoner
 
-        executor = store.config.executor
-        if executor.reasoner == "endpoint":
-            reasoner = distiller(executor)
-        else:
-            reasoner = HostReasoner.for_host(host, model=executor.host_model)
+        executor = selection.resolve(
+            store.config.executor,
+            operation,
+            source_host=host if operation == selection.WRITE else "",
+        )
+        reasoner = distiller(executor)
+        if isinstance(reasoner, HostReasoner):
             reasoner.host.spec = dataclasses.replace(
                 reasoner.host.spec,
                 attempts=1,
@@ -244,15 +269,23 @@ def _live_reasoner_check(store: Store, host: str) -> Check:
         reply = reasoner("Reply with exactly AGENT_MEMORY_READY.")
     except Exception as error:
         return Check(
-            "REASONER_UNAVAILABLE",
+            f"{operation.upper()}_REASONER_UNAVAILABLE",
             False,
-            f"live reasoner probe failed: {type(error).__name__}",
+            f"live {operation} reasoner probe failed: {type(error).__name__}",
         )
     ok = "AGENT_MEMORY_READY" in reply
     return Check(
-        "REASONER_LIVE_OK" if ok else "REASONER_UNAVAILABLE",
+        (
+            f"{operation.upper()}_REASONER_LIVE_OK"
+            if ok
+            else f"{operation.upper()}_REASONER_UNAVAILABLE"
+        ),
         ok,
-        "boundary reasoner completed a live request" if ok else "live reasoner returned no READY",
+        (
+            f"{operation} reasoner completed a live request"
+            if ok
+            else f"live {operation} reasoner returned no READY"
+        ),
     )
 
 
