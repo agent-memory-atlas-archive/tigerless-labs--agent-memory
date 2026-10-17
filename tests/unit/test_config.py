@@ -2,7 +2,13 @@ import ast
 import pathlib
 
 import pytest
-from agent_memory.core.config import CONFIG_FILENAME, REASONER_HOST, Config
+from agent_memory.core.config import (
+    CONFIG_FILENAME,
+    REASONER_HOST,
+    TOOL_MODE_AUTO,
+    TOOL_MODE_NATIVE,
+    Config,
+)
 
 CORE_SRC = pathlib.Path(__file__).resolve().parents[2] / "packages" / "core" / "src"
 CONFIG_MODULE = CORE_SRC / "agent_memory" / "core" / "config.py"
@@ -25,6 +31,14 @@ def test_defaults_are_complete_and_self_consistent():
     assert config.storage.max_depth >= len(("type", "file"))
     assert config.executor.reasoner == REASONER_HOST
     assert config.executor.project == ""
+    assert config.executor.host_provider == ""
+    assert config.executor.host_allow_data_training is False
+    assert config.executor.tool_mode == TOOL_MODE_AUTO
+    assert config.executor.write.reasoner == ""
+    assert config.executor.write.host == ""
+    assert config.executor.write.tool_mode == ""
+    assert config.executor.manage.reasoner == ""
+    assert config.executor.manage.host == ""
 
 
 def test_every_factory_group_field_has_a_source_that_may_name_a_directory():
@@ -43,6 +57,13 @@ def test_config_round_trips_through_disk(tmp_path):
     original.recall.default_limit += 1
     original.index.vector_enabled = True
     original.index.vector_model = "test/model-v2"
+    original.executor.write.reasoner = "host"
+    original.executor.write.host = "muse-code"
+    original.executor.write.host_provider = "openrouter"
+    original.executor.write.host_allow_data_training = True
+    original.executor.write.tool_mode = TOOL_MODE_NATIVE
+    original.executor.manage.reasoner = "endpoint"
+    original.executor.manage.project = "user-project"
     original.save(tmp_path)
 
     assert (tmp_path / CONFIG_FILENAME).exists()
@@ -51,6 +72,56 @@ def test_config_round_trips_through_disk(tmp_path):
     assert reloaded.recall.default_limit == original.recall.default_limit
     assert reloaded.index.vector_enabled is True
     assert reloaded.index.vector_model == "test/model-v2"
+    assert reloaded.executor.write.host == "muse-code"
+    assert reloaded.executor.write.host_provider == "openrouter"
+    assert reloaded.executor.write.host_allow_data_training is True
+    assert reloaded.executor.write.tool_mode == TOOL_MODE_NATIVE
+    assert reloaded.executor.manage.reasoner == "endpoint"
+    assert reloaded.executor.manage.project == "user-project"
+
+
+def test_legacy_flat_executor_config_remains_valid(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text(
+        """[executor]
+reasoner = "endpoint"
+project = "user-project"
+model = "google/gemini-test"
+""",
+        encoding="utf-8",
+    )
+
+    loaded = Config.load(tmp_path)
+
+    assert loaded.executor.reasoner == "endpoint"
+    assert loaded.executor.project == "user-project"
+    assert loaded.executor.write.reasoner == ""
+    assert loaded.executor.manage.reasoner == ""
+
+
+def test_nested_operation_executor_config_loads_without_replacing_legacy_fallbacks(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text(
+        """[executor]
+reasoner = "host"
+host = "codex"
+
+[executor.write]
+reasoner = "host"
+host = "source"
+
+[executor.manage]
+reasoner = "endpoint"
+endpoint = "https://models.example/v1"
+model = "gemini-test"
+""",
+        encoding="utf-8",
+    )
+
+    loaded = Config.load(tmp_path)
+
+    assert loaded.executor.host == "codex"
+    assert loaded.executor.write.host == "source"
+    assert loaded.executor.manage.reasoner == "endpoint"
+    assert loaded.executor.manage.endpoint == "https://models.example/v1"
 
 
 def test_vector_knobs_leave_the_recall_fingerprint_alone_while_disabled():

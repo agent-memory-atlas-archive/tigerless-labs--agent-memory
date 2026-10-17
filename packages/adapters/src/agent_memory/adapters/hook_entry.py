@@ -21,8 +21,6 @@ from types import FrameType
 from agent_memory.core import injection
 from agent_memory.core.config import (
     EXECUTOR_ENV_VAR,
-    MUSE_BINARY_ENV_VAR,
-    MUSE_LAUNCHER_ENV_VAR,
     MUSE_SETTINGS_ENV_VAR,
     STORE_ENV_VAR,
 )
@@ -48,17 +46,17 @@ KEY_DISTILL = "distill"
 DISTILL_LAUNCHED = "launched"
 DISTILL_SKIPPED = "skipped"
 SESSION_FLAG = "--session"
-REASON_HOST_FLAG = "--reason-host"
+SOURCE_HOST_FLAG = "--source-host"
 HOST_FLAG = "--host"
 STORE_FLAG = "--store"
 MUSE_DATA_HOME_FLAG = "--muse-data-home"
 MUSE_SETTINGS_FLAG = "--muse-settings"
-MUSE_LAUNCHER_FLAG = "--muse-launcher"
-MUSE_BINARY_FLAG = "--muse-binary"
 EXECUTOR_BINARY = "mem"
+AUTO_DREAM_FLAG = "--auto-dream"
 PRINTED_KEYS = (CLAUDE_OUTPUT_KEY, CLAUDE_CONTEXT_KEY)
 
 Launcher = Callable[[Store, str, str], bool]
+DreamLauncher = Callable[[Store, str], object]
 
 
 class _Timeout(Exception):
@@ -76,8 +74,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.add_argument(STORE_FLAG, default="")
         parser.add_argument(MUSE_DATA_HOME_FLAG, default="")
         parser.add_argument(MUSE_SETTINGS_FLAG, default="")
-        parser.add_argument(MUSE_LAUNCHER_FLAG, default="")
-        parser.add_argument(MUSE_BINARY_FLAG, default="")
         args = parser.parse_args(argv or ())
         event = normalize_event(json.loads(sys.stdin.read() or "{}"), args.host)
         if args.store:
@@ -87,10 +83,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.muse_settings:
             event[KEY_MUSE_SETTINGS] = args.muse_settings
             os.environ[MUSE_SETTINGS_ENV_VAR] = args.muse_settings
-        if args.muse_launcher:
-            os.environ[MUSE_LAUNCHER_ENV_VAR] = args.muse_launcher
-        if args.muse_binary:
-            os.environ[MUSE_BINARY_ENV_VAR] = args.muse_binary
         store_value = event.get("store")
         store = Store(
             str(store_value) if store_value else None,
@@ -108,15 +100,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def handle(
-    store: Store, event: dict[str, object], launch: Launcher | None = None
+    store: Store,
+    event: dict[str, object],
+    launch: Launcher | None = None,
+    dream_launch: DreamLauncher | None = None,
 ) -> dict[str, object]:
     host = str(event.get(KEY_HOST) or moments.HOST_CLAUDE_CODE)
     raw_event = str(event.get(KEY_EVENT_CLAUDE) or event.get(KEY_EVENT_GENERIC) or "")
     moment = moments.moment_for(host, raw_event)
     if moment == moments.MOMENT_INJECT:
-        return _inject(store, host)
+        response = _inject(store, host)
+        (dream_launch or _launch_dream)(store, host)
+        return response
     if moment in (moments.MOMENT_PAUSE, moments.MOMENT_EVICT):
-        return _boundary(store, event, host, moment, launch or launch_distill)
+        return _boundary(
+            store,
+            event,
+            host,
+            moment,
+            launch or launch_distill,
+            dream_launch or _launch_dream,
+        )
     return {}
 
 
@@ -142,7 +146,12 @@ def _inject(store: Store, host: str) -> dict[str, object]:
 
 
 def _boundary(
-    store: Store, event: dict[str, object], host: str, moment: str, launch: Launcher
+    store: Store,
+    event: dict[str, object],
+    host: str,
+    moment: str,
+    launch: Launcher,
+    dream_launch: DreamLauncher,
 ) -> dict[str, object]:
     session = str(event.get(KEY_SESSION) or "")
     if not session:
@@ -150,6 +159,7 @@ def _boundary(
     items = _items(event)
     result = capture_module.capture(store, session, items, source=moment)
     if result.is_empty():
+        dream_launch(store, host)
         return {}
     launched = store.config.write.distill_on_boundary and launch(store, session, host)
     return {
@@ -160,6 +170,12 @@ def _boundary(
         "pointer": result.pointer,
         KEY_DISTILL: DISTILL_LAUNCHED if launched else DISTILL_SKIPPED,
     }
+
+
+def _launch_dream(store: Store, _host: str) -> object:
+    from . import auto_dream
+
+    return auto_dream.launch(store, trigger_source="hook")
 
 
 def launch_distill(store: Store, session: str, host: str) -> bool:
@@ -177,7 +193,7 @@ def launch_distill(store: Store, session: str, host: str) -> bool:
         store.layout.state_dir.mkdir(parents=True, exist_ok=True)
         with (store.layout.state_dir / LOG_FILENAME).open("a", encoding="utf-8") as log:
             subprocess.Popen(
-                [*command, SESSION_FLAG, session, REASON_HOST_FLAG, host],
+                [*command, SESSION_FLAG, session, SOURCE_HOST_FLAG, host, AUTO_DREAM_FLAG],
                 env=environment,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
