@@ -4,7 +4,9 @@ Merging two entries, or writing an abstract that reads well, needs a reader; dec
 entries are worth a second look does not. So the deterministic pass drafts, this module puts
 the draft into words and reads the answer back, and something outside the core — a host agent,
 or a model endpoint — supplies the reading. The core still contains no LLM client: a reasoner
-is any callable that takes text and returns text.
+is any callable that takes text and returns text.  The review request and outcome below are the
+boundary shared by that compatibility path and native tool execution; neither grants mutation
+authority.
 
 The reply is a grammar, not a conversation. Anything that does not parse as a verdict on an
 open proposal is discarded, so a reasoner that rambles, hallucinates an identifier, or is
@@ -15,6 +17,7 @@ something that was not on the table.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -88,21 +91,161 @@ class Verdict:
     parts: tuple[Part, ...] = ()
 
 
-def render(proposals: Sequence[Draft], records: Sequence[MemoryRecord]) -> str:
+@dataclasses.dataclass(frozen=True)
+class ReviewSource:
+    """One immutable evidence snapshot named by a proposal."""
+
+    name: str
+    source_hash: str
+    type: str
+    abstract: str
+    body: str
+    provenance: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewProposal:
+    """A proposal plus the exact source versions the reviewer is allowed to inspect."""
+
+    id: str
+    kind: str
+    targets: tuple[str, ...]
+    reason: str
+    evidence: str
+    sources: tuple[ReviewSource, ...]
+
+    def as_dict(self, *, include_body: bool = False) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "targets": list(self.targets),
+            "reason": self.reason,
+            "evidence": self.evidence,
+            "sources": [
+                {
+                    "name": source.name,
+                    "source_hash": source.source_hash,
+                    "type": source.type,
+                    "abstract": source.abstract,
+                    **({"body": source.body} if include_body else {}),
+                    "provenance": list(source.provenance),
+                }
+                for source in self.sources
+            ],
+        }
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewLimits:
+    """Library-owned bounds for one short-lived review run."""
+
+    max_steps: int
+    max_tool_calls: int
+    timeout_seconds: float
+    tool_result_chars: int
+    evidence_chars: int
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewRequest:
+    """The complete, run-scoped input contract for proposal review."""
+
+    proposals: tuple[ReviewProposal, ...]
+    sources: tuple[ReviewSource, ...]
+    limits: ReviewLimits
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewOutcome:
+    """Transport-neutral output; only Manage may turn its verdicts into decisions."""
+
+    verdicts: tuple[Verdict, ...]
+    submitted: bool
+    complete: bool
+    rounds: int = 1
+    tool_calls: int = 0
+    error: str = ""
+
+
+def prepare(
+    proposals: Sequence[Draft], records: Sequence[MemoryRecord], limits: ReviewLimits
+) -> ReviewRequest:
+    """Freeze the proposal menu and its allowed evidence before external reasoning starts."""
     named = {name for proposal in proposals for name in proposal.targets}
+    scoped_sources = tuple(_source(record) for record in records if record.name in named)
+    by_name = {source.name: source for source in scoped_sources}
+    reviewed = []
+    for proposal in proposals:
+        proposal_sources = []
+        for name in proposal.targets:
+            source = by_name.get(name)
+            if source is None:
+                continue
+            proposal_sources.append(source)
+        reviewed.append(
+            ReviewProposal(
+                id=proposal.id,
+                kind=proposal.kind,
+                targets=proposal.targets,
+                reason=proposal.reason,
+                evidence=proposal.evidence,
+                sources=tuple(proposal_sources),
+            )
+        )
+    return ReviewRequest(tuple(reviewed), scoped_sources, limits)
+
+
+def review_text(request: ReviewRequest, reasoner: Reasoner) -> ReviewOutcome:
+    """Compatibility implementation: one prompt in, line-oriented verdicts out."""
+    reply = reasoner(render(request))
+    verdicts = tuple(parse(reply))
+    return ReviewOutcome(
+        verdicts=verdicts,
+        submitted=bool(verdicts),
+        complete=bool(verdicts),
+    )
+
+
+def render(
+    request_or_proposals: ReviewRequest | Sequence[Draft],
+    records: Sequence[MemoryRecord] | None = None,
+) -> str:
+    """Render the legacy full-evidence prompt.
+
+    The two-argument form remains for callers outside Manage while the one-argument form consumes
+    the shared review request used by both execution modes.
+    """
+    if isinstance(request_or_proposals, ReviewRequest):
+        review_proposals: Sequence[Draft] = request_or_proposals.proposals
+        review_sources: Sequence[ReviewSource] = request_or_proposals.sources
+    else:
+        review_proposals = request_or_proposals
+        named = {name for proposal in review_proposals for name in proposal.targets}
+        review_sources = [_source(record) for record in (records or ()) if record.name in named]
     lines = [
         f"- {proposal.id} ({proposal.kind}): {', '.join(proposal.targets)} — "
         f"{proposal.reason} [{proposal.evidence}]"
-        for proposal in proposals
+        for proposal in review_proposals
     ]
     entries = [
-        f"### {record.name}\nabstract: {record.abstract}\n\n{record.body.strip()}"
-        for record in records
-        if record.name in named
+        f"### {source.name}\nabstract: {source.abstract}\n\n{source.body.strip()}"
+        for source in review_sources
     ]
     return prompts.manage_review(
         proposals="## proposals\n\n" + "\n".join(lines),
         entries="## entries\n\n" + "\n\n".join(entries),
+    )
+
+
+def _source(record: MemoryRecord) -> ReviewSource:
+    return ReviewSource(
+        name=record.name,
+        source_hash=record.source_hash
+        or hashlib.sha256(record.to_text().encode("utf-8")).hexdigest(),
+        type=record.type,
+        abstract=record.abstract,
+        body=record.body,
+        provenance=tuple(record.provenance),
     )
 
 

@@ -173,12 +173,14 @@ class Manage:
         something that is not open, or that an earlier verdict invalidated, is dropped."""
         if reasoner is None or not proposals:
             return (), ()
+        request = reasoning.prepare(proposals, records, self._review_limits())
+        outcome = reasoning.review_text(request, reasoner)
         open_now = {proposal.id: proposal for proposal in proposals}
         caps = self._caps()
         accepted: dict[str, int] = {}
         decisions: list[Decision] = []
         withheld: list[str] = []
-        for verdict in reasoning.parse(reasoner(reasoning.render(proposals, records))):
+        for verdict in outcome.verdicts:
             proposal = open_now.get(verdict.proposal_id)
             if proposal is None:
                 continue
@@ -193,6 +195,17 @@ class Manage:
             if verdict.accept:
                 accepted[proposal.kind] = accepted.get(proposal.kind, 0) + 1
         return tuple(decisions), tuple(withheld)
+
+    def _review_limits(self) -> reasoning.ReviewLimits:
+        manage = self._config.manage
+        executor = self._config.executor
+        return reasoning.ReviewLimits(
+            max_steps=manage.review_max_steps,
+            max_tool_calls=manage.review_max_tool_calls,
+            timeout_seconds=executor.manage.timeout_seconds or executor.timeout_seconds,
+            tool_result_chars=manage.review_tool_result_chars,
+            evidence_chars=manage.review_evidence_chars,
+        )
 
     def _caps(self) -> dict[str, int]:
         manage = self._config.manage
@@ -645,8 +658,10 @@ class Manage:
     def _write_report(self, report: DreamReport) -> str:
         folder = self._store.layout.dream_reports
         folder.mkdir(parents=True, exist_ok=True)
-        filename = f"auto-{report.dream_id}{REPORT_SUFFIX}" if report.dream_id else (
-            self._clock.stamp() + REPORT_SUFFIX
+        filename = (
+            f"auto-{report.dream_id}{REPORT_SUFFIX}"
+            if report.dream_id
+            else (self._clock.stamp() + REPORT_SUFFIX)
         )
         path = folder / filename
         lines = [

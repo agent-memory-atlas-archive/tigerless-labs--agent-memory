@@ -113,6 +113,10 @@ class ManageConfig:
     max_splits_per_sleep: int = 2
     max_deletes_per_sleep: int = 3
     split_min_sections: int = 3
+    review_max_steps: int = 8
+    review_max_tool_calls: int = 24
+    review_tool_result_chars: int = 8000
+    review_evidence_chars: int = 32000
     git_commit: bool = True
     dream_report_dirname: str = "dream-reports"
 

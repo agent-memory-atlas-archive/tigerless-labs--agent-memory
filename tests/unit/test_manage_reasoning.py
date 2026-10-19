@@ -9,7 +9,7 @@ from agent_memory.core.manage import (
     PROPOSAL_SUPERSEDE,
     Manage,
 )
-from agent_memory.core.reasoning import parse, render
+from agent_memory.core.reasoning import ReviewLimits, parse, prepare, render
 
 
 class Recorder:
@@ -228,3 +228,18 @@ def test_rendering_and_parsing_are_inverse_enough_to_round_trip(seeded):
     assert [verdict.proposal_id for verdict in parse(replies)] == [
         proposal.id for proposal in proposals
     ]
+
+
+def test_review_request_freezes_scoped_sources_and_their_hashes(seeded):
+    _twins(seeded)
+    proposals = Manage(seeded).proposals()
+    request = prepare(proposals, seeded.records(), ReviewLimits(8, 24, 120.0, 8000, 32000))
+
+    assert {proposal.id for proposal in request.proposals} == {
+        proposal.id for proposal in proposals
+    }
+    assert all(source.source_hash for proposal in request.proposals for source in proposal.sources)
+    assert {source.name for proposal in request.proposals for source in proposal.sources} <= {
+        target for proposal in proposals for target in proposal.targets
+    }
+    assert render(request) == render(proposals, seeded.records())

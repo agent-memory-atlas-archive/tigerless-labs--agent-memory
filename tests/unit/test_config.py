@@ -26,6 +26,10 @@ def test_defaults_are_complete_and_self_consistent():
     assert config.weight.decay_step > 0
     assert config.weight.boost_step > 0
     assert config.manage.max_merges_per_sleep >= 0
+    assert config.manage.review_max_steps > 0
+    assert config.manage.review_max_tool_calls >= config.manage.review_max_steps
+    assert config.manage.review_tool_result_chars > 0
+    assert config.manage.review_evidence_chars >= config.manage.review_tool_result_chars
     assert config.recall.default_limit > 0
     assert config.recall.recency_half_life_days > 0
     assert config.storage.max_depth >= len(("type", "file"))
