@@ -22,6 +22,7 @@ overrides = tomllib.loads("\\n".join(argv[i + 1] for i, part in enumerate(argv) 
 server = next(iter(overrides["mcp_servers"].values()))
 prompt = sys.stdin.read()
 system = open(overrides["model_instructions_file"], encoding="utf-8").read()
+print(json.dumps({{"type": "thread.started", "thread_id": "fake"}}), flush=True)
 child = subprocess.Popen(
     [server["command"], *server["args"]],
     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
@@ -36,7 +37,13 @@ def rpc(request_id, method, params=None):
 rpc(0, "initialize")
 listed = [tool["name"] for tool in rpc(1, "tools/list")["result"]["tools"]]
 calls = []
+print(json.dumps({{"type": "item.started", "item": {{
+    "id": "menu", "type": "mcp_tool_call"
+}}}}), flush=True)
 menu_reply = rpc(2, "tools/call", {{"name": "list_proposals", "arguments": {{}}}})
+print(json.dumps({{"type": "item.completed", "item": {{
+    "id": "menu", "type": "mcp_tool_call"
+}}}}), flush=True)
 calls.append(menu_reply)
 menu = json.loads(menu_reply["result"]["content"][0]["text"])
 request_id = 3
@@ -114,6 +121,11 @@ def test_mem_sleep_runs_native_codex_mcp_review_then_manage_validation(
     assert payload["review"]["input_tokens"] == 900
     assert payload["review"]["cached_input_tokens"] == 600
     assert payload["review"]["output_tokens"] == 90
+    assert payload["review"]["startup_seconds"] is not None
+    assert payload["review"]["model_wait_seconds"] is not None
+    assert payload["review"]["mcp_seconds"] is not None
+    assert payload["review"]["shutdown_seconds"] is not None
+    assert payload["review"]["apply_seconds"] >= 0.0
     assert payload["decisions"]
     assert all(decision["verdict"] == "rejected" for decision in payload["decisions"])
 

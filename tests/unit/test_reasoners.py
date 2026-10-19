@@ -1,5 +1,6 @@
 """Executors: text out, text back, and silence whenever the outside world misbehaves."""
 
+import dataclasses
 import io
 import json
 import pathlib
@@ -140,6 +141,41 @@ def test_codex_jsonl_usage_is_retained_for_native_review_metrics(tmp_path, monke
     assert result.usage.input_tokens == 120
     assert result.usage.cached_input_tokens == 80
     assert result.usage.output_tokens == 12
+
+
+def test_codex_jsonl_trace_separates_startup_model_mcp_and_shutdown():
+    from agent_memory.executor.hosts import _CodexTrace
+
+    trace = _CodexTrace(started=10.0)
+    trace.observe(json.dumps({"type": "thread.started"}), 11.0)
+    trace.observe(
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {"id": "call-1", "type": "mcp_tool_call"},
+            }
+        ),
+        14.0,
+    )
+    trace.observe(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"id": "call-1", "type": "mcp_tool_call"},
+            }
+        ),
+        14.5,
+    )
+    trace.observe(json.dumps({"type": "turn.completed"}), 19.0)
+
+    phases = trace.phases(finished=20.0)
+
+    assert phases is not None
+    assert phases.startup_seconds == 1.0
+    assert phases.model_wait_seconds == 7.5
+    assert phases.mcp_seconds == 0.5
+    assert phases.shutdown_seconds == 1.0
+    assert sum(dataclasses.astuple(phases)) == 10.0
 
 
 def test_a_host_reasoner_marks_its_session_as_the_executor_so_hooks_stand_down():

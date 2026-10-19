@@ -20,6 +20,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 
@@ -89,6 +90,7 @@ class HostResult:
     seconds: float
     error: str = ""
     usage: HostUsage | None = None
+    phases: HostPhases | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -97,6 +99,16 @@ class HostUsage:
     input_tokens: int
     cached_input_tokens: int
     output_tokens: int
+
+
+@dataclasses.dataclass(frozen=True)
+class HostPhases:
+    """Observed Codex process phases; together they account for Host wall time."""
+
+    startup_seconds: float
+    model_wait_seconds: float
+    mcp_seconds: float
+    shutdown_seconds: float
 
 
 @dataclasses.dataclass(frozen=True)
@@ -894,17 +906,29 @@ class Host:
         capture(state="started")
         if evidence:
             environment = {**environment, observation.ATTEMPT_ENV: attempt_id}
+        phase_trace = None
         try:
-            completed = subprocess.run(
-                command,
-                input=payload,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds or self.spec.timeout_seconds,
-                env=environment,
-                cwd=str(workdir) if workdir else None,
-                check=False,
-            )
+            timeout = timeout_seconds or self.spec.timeout_seconds
+            if self.spec.name == HOST_CODEX and "--json" in command:
+                completed, phase_trace = _run_codex_jsonl(
+                    command,
+                    payload,
+                    timeout=timeout,
+                    environment=environment,
+                    workdir=workdir,
+                    started=started,
+                )
+            else:
+                completed = subprocess.run(
+                    command,
+                    input=payload,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=environment,
+                    cwd=str(workdir) if workdir else None,
+                    check=False,
+                )
         except subprocess.TimeoutExpired as error:
 
             def decoded(value):
@@ -916,6 +940,7 @@ class Host:
             capture(state="error", error_type=type(error).__name__)
             return HostResult("", False, time.monotonic() - started, str(error))
         elapsed = time.monotonic() - started
+        phases = phase_trace.phases(started + elapsed) if phase_trace else None
         capture(
             state="completed",
             returncode=completed.returncode,
@@ -945,7 +970,13 @@ class Host:
         if require_answer and self.spec.name in (HOST_CODEX, HOST_MUSE_CODE) and not text:
             label = "Codex" if self.spec.name == HOST_CODEX else "Muse"
             return HostResult("", False, elapsed, f"missing or empty {label} final message")
-        return HostResult(text, True, elapsed, usage=_host_usage(completed.stdout))
+        return HostResult(
+            text,
+            True,
+            elapsed,
+            usage=_host_usage(completed.stdout),
+            phases=phases,
+        )
 
     def _environment(
         self, store_root: pathlib.Path | None, extra: dict[str, str]
@@ -991,3 +1022,105 @@ def _host_usage(stdout: str) -> HostUsage | None:
     if not found:
         return None
     return HostUsage(turns=turns, **totals)
+
+
+class _CodexTrace:
+    """Timestamp lifecycle JSONL as it arrives; Codex events carry no wall-clock field."""
+
+    def __init__(self, started: float):
+        self.started = started
+        self.first_event: float | None = None
+        self.turn_completed: float | None = None
+        self.mcp_started: dict[str, float] = {}
+        self.mcp_seconds = 0.0
+
+    def observe(self, line: str, at: float) -> None:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict):
+            return
+        if self.first_event is None:
+            self.first_event = at
+        event_type = event.get("type")
+        if event_type == "turn.completed":
+            self.turn_completed = at
+        if event_type not in ("item.started", "item.completed"):
+            return
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+            return
+        item_id = item.get("id")
+        if not isinstance(item_id, str):
+            return
+        if event_type == "item.started":
+            self.mcp_started[item_id] = at
+        else:
+            begun = self.mcp_started.pop(item_id, None)
+            if begun is not None:
+                self.mcp_seconds += max(0.0, at - begun)
+
+    def phases(self, finished: float) -> HostPhases | None:
+        if self.first_event is None or self.turn_completed is None:
+            return None
+        startup = max(0.0, self.first_event - self.started)
+        shutdown = max(0.0, finished - self.turn_completed)
+        elapsed = max(0.0, finished - self.started)
+        model_wait = max(0.0, elapsed - startup - self.mcp_seconds - shutdown)
+        return HostPhases(startup, model_wait, self.mcp_seconds, shutdown)
+
+
+def _run_codex_jsonl(
+    command: list[str],
+    payload: str,
+    *,
+    timeout: float,
+    environment: dict[str, str],
+    workdir: pathlib.Path | None,
+    started: float,
+) -> tuple[subprocess.CompletedProcess[str], _CodexTrace]:
+    """Capture Codex JSONL receive times without exposing or persisting model content."""
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+        cwd=str(workdir) if workdir else None,
+    )
+    stdout: list[str] = []
+    stderr: list[str] = []
+    trace = _CodexTrace(started)
+
+    def read(stream, sink: list[str], observe: bool = False) -> None:
+        for line in iter(stream.readline, ""):
+            sink.append(line)
+            if observe:
+                trace.observe(line, time.monotonic())
+        stream.close()
+
+    assert process.stdout is not None and process.stderr is not None and process.stdin is not None
+    out_thread = threading.Thread(target=read, args=(process.stdout, stdout, True), daemon=True)
+    err_thread = threading.Thread(target=read, args=(process.stderr, stderr), daemon=True)
+    out_thread.start()
+    err_thread.start()
+    try:
+        process.stdin.write(payload)
+        process.stdin.close()
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        process.kill()
+        process.wait()
+        out_thread.join()
+        err_thread.join()
+        raise subprocess.TimeoutExpired(
+            command, timeout, output="".join(stdout), stderr="".join(stderr)
+        ) from error
+    out_thread.join()
+    err_thread.join()
+    return (
+        subprocess.CompletedProcess(command, process.returncode, "".join(stdout), "".join(stderr)),
+        trace,
+    )

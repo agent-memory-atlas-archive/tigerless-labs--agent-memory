@@ -19,6 +19,7 @@ import pathlib
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterable
 
 from . import reasoning, timestamp
@@ -188,6 +189,10 @@ class Manage:
             outcome = dataclasses.replace(
                 kit.outcome(),
                 duration_seconds=runtime.duration_seconds,
+                startup_seconds=runtime.startup_seconds,
+                model_wait_seconds=runtime.model_wait_seconds,
+                mcp_seconds=runtime.mcp_seconds,
+                shutdown_seconds=runtime.shutdown_seconds,
                 model_requests=runtime.model_requests,
                 agent_turns=runtime.agent_turns,
                 input_tokens=runtime.input_tokens,
@@ -198,6 +203,7 @@ class Manage:
                 raise ValidationError([FieldError("review", outcome.error)])
         else:
             outcome = reasoning.review_text(request, reasoner)
+        apply_started = time.monotonic()
         open_now = {proposal.id: proposal for proposal in proposals}
         reviewed = {proposal.id: proposal for proposal in request.proposals}
         caps = self._caps()
@@ -225,6 +231,7 @@ class Manage:
                 continue
             if verdict.accept:
                 accepted[proposal.kind] = accepted.get(proposal.kind, 0) + 1
+        outcome = dataclasses.replace(outcome, apply_seconds=time.monotonic() - apply_started)
         return tuple(decisions), tuple(withheld), outcome
 
     def _review_limits(self) -> reasoning.ReviewLimits:
@@ -768,6 +775,11 @@ class Manage:
                     f"- rounds: {report.review.rounds}",
                     f"- tool_calls: {report.review.tool_calls}",
                     f"- duration_seconds: {report.review.duration_seconds:.3f}",
+                    f"- startup_seconds: {_seconds(report.review.startup_seconds)}",
+                    f"- model_wait_seconds: {_seconds(report.review.model_wait_seconds)}",
+                    f"- mcp_seconds: {_seconds(report.review.mcp_seconds)}",
+                    f"- shutdown_seconds: {_seconds(report.review.shutdown_seconds)}",
+                    f"- apply_seconds: {report.review.apply_seconds:.3f}",
                     f"- model_requests: {_metric(report.review.model_requests)}",
                     f"- agent_turns: {_metric(report.review.agent_turns)}",
                     f"- input_tokens: {_metric(report.review.input_tokens)}",
@@ -775,10 +787,7 @@ class Manage:
                     f"- output_tokens: {_metric(report.review.output_tokens)}",
                     _report_values(
                         "evidence_reads",
-                        (
-                            f"{proposal}/{name}"
-                            for proposal, name in report.review.evidence_reads
-                        ),
+                        (f"{proposal}/{name}" for proposal, name in report.review.evidence_reads),
                     ),
                     _report_values(
                         "tool_trace",
@@ -858,6 +867,11 @@ def _review_dict(outcome: reasoning.ReviewOutcome | None) -> dict[str, object] |
         "rounds": outcome.rounds,
         "tool_calls": outcome.tool_calls,
         "duration_seconds": outcome.duration_seconds,
+        "startup_seconds": outcome.startup_seconds,
+        "model_wait_seconds": outcome.model_wait_seconds,
+        "mcp_seconds": outcome.mcp_seconds,
+        "shutdown_seconds": outcome.shutdown_seconds,
+        "apply_seconds": outcome.apply_seconds,
         "model_requests": outcome.model_requests,
         "agent_turns": outcome.agent_turns,
         "input_tokens": outcome.input_tokens,
@@ -873,6 +887,10 @@ def _review_dict(outcome: reasoning.ReviewOutcome | None) -> dict[str, object] |
 
 def _metric(value: int | None) -> str:
     return str(value) if value is not None else "unavailable"
+
+
+def _seconds(value: float | None) -> str:
+    return f"{value:.3f}" if value is not None else "unavailable"
 
 
 def _report_values(label: str, values: Iterable[str]) -> str:

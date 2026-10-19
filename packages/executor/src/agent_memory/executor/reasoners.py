@@ -123,8 +123,13 @@ class ToolHostReasoner(HostReasoner):
             timeout_seconds=toolkit.request.limits.timeout_seconds,
         )
         usage = result.usage
+        phases = result.phases
         return ReviewRuntime(
             duration_seconds=result.seconds,
+            startup_seconds=phases.startup_seconds if phases else None,
+            model_wait_seconds=phases.model_wait_seconds if phases else None,
+            mcp_seconds=phases.mcp_seconds if phases else None,
+            shutdown_seconds=phases.shutdown_seconds if phases else None,
             agent_turns=usage.turns if usage else None,
             input_tokens=usage.input_tokens if usage else None,
             cached_input_tokens=usage.cached_input_tokens if usage else None,

@@ -64,7 +64,13 @@ class NativeRecorder:
                     ]
                 },
             )
-        return ReviewRuntime(duration_seconds=0.25)
+        return ReviewRuntime(
+            duration_seconds=0.25,
+            startup_seconds=0.02,
+            model_wait_seconds=0.20,
+            mcp_seconds=0.02,
+            shutdown_seconds=0.01,
+        )
 
 
 def _twins(store):
@@ -299,6 +305,11 @@ def test_native_review_reads_evidence_submits_tools_and_reuses_manage_apply(seed
     assert report.review.mode == "native"
     assert report.review.complete
     assert report.review.duration_seconds == 0.25
+    assert report.review.startup_seconds == 0.02
+    assert report.review.model_wait_seconds == 0.20
+    assert report.review.mcp_seconds == 0.02
+    assert report.review.shutdown_seconds == 0.01
+    assert report.review.apply_seconds >= 0.0
     assert report.review.evidence_reads
     assert [name for name, _ in report.review.tool_trace] == [
         TOOL_LIST,
@@ -308,6 +319,10 @@ def test_native_review_reads_evidence_submits_tools_and_reuses_manage_apply(seed
     assert all(decision.verdict == "rejected" for decision in report.decisions)
     written = pathlib.Path(report.path).read_text()
     assert "## review execution" in written
+    assert "startup_seconds: 0.020" in written
+    assert "model_wait_seconds: 0.200" in written
+    assert "mcp_seconds: 0.020" in written
+    assert "apply_seconds:" in written
     assert "read_evidence" in written and "submit_verdicts" in written
 
 

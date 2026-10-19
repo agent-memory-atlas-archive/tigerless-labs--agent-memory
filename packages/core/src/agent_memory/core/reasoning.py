@@ -182,6 +182,11 @@ class ReviewOutcome:
     rounds: int = 1
     tool_calls: int = 0
     duration_seconds: float = 0.0
+    startup_seconds: float | None = None
+    model_wait_seconds: float | None = None
+    mcp_seconds: float | None = None
+    shutdown_seconds: float | None = None
+    apply_seconds: float = 0.0
     model_requests: int | None = None
     agent_turns: int | None = None
     input_tokens: int | None = None
@@ -195,6 +200,10 @@ class ReviewOutcome:
 @dataclasses.dataclass(frozen=True)
 class ReviewRuntime:
     duration_seconds: float
+    startup_seconds: float | None = None
+    model_wait_seconds: float | None = None
+    mcp_seconds: float | None = None
+    shutdown_seconds: float | None = None
     model_requests: int | None = None
     agent_turns: int | None = None
     input_tokens: int | None = None
