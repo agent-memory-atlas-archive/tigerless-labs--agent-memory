@@ -19,6 +19,7 @@ import pathlib
 import re
 import subprocess
 import tempfile
+from collections.abc import Iterable
 
 from . import reasoning, timestamp
 from . import record as record_module
@@ -745,7 +746,8 @@ class Manage:
         )
         lines.extend(["", "## decided", ""])
         lines.extend(
-            f"- {decision.proposal_id} {decision.verdict} — {decision.detail}"
+            f"- {decision.proposal_id} {decision.verdict}"
+            + (f" — {decision.detail}" if decision.detail else "")
             for decision in report.decisions
         )
         lines.extend(["", "## proposals (open)", ""])
@@ -771,14 +773,19 @@ class Manage:
                     f"- input_tokens: {_metric(report.review.input_tokens)}",
                     f"- cached_input_tokens: {_metric(report.review.cached_input_tokens)}",
                     f"- output_tokens: {_metric(report.review.output_tokens)}",
-                    "- evidence_reads: "
-                    + ", ".join(
-                        f"{proposal}/{name}" for proposal, name in report.review.evidence_reads
+                    _report_values(
+                        "evidence_reads",
+                        (
+                            f"{proposal}/{name}"
+                            for proposal, name in report.review.evidence_reads
+                        ),
                     ),
-                    "- tool_trace: "
-                    + ", ".join(
-                        f"{name}{'!error' if failed else ''}"
-                        for name, failed in report.review.tool_trace
+                    _report_values(
+                        "tool_trace",
+                        (
+                            f"{name}{'!error' if failed else ''}"
+                            for name, failed in report.review.tool_trace
+                        ),
                     ),
                 ]
             )
@@ -866,6 +873,11 @@ def _review_dict(outcome: reasoning.ReviewOutcome | None) -> dict[str, object] |
 
 def _metric(value: int | None) -> str:
     return str(value) if value is not None else "unavailable"
+
+
+def _report_values(label: str, values: Iterable[str]) -> str:
+    rendered = ", ".join(values)
+    return f"- {label}:" + (f" {rendered}" if rendered else "")
 
 
 def _tokens(text: str) -> set[str]:

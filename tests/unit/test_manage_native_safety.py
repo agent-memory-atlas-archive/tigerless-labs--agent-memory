@@ -1,6 +1,7 @@
 """Native proposal review preserves every existing Manage authority boundary."""
 
 import json
+import pathlib
 
 import pytest
 from agent_memory.core import reasoning
@@ -115,6 +116,8 @@ def test_every_proposal_kind_enters_one_native_review_without_new_authority(stor
         proposal.id for proposal in reviewer.proposals
     }
     assert all(record.is_active() for record in store.records())
+    rendered = pathlib.Path(report.path).read_text(encoding="utf-8")
+    assert not any(line.endswith(" ") for line in rendered.splitlines())
 
 
 def test_text_and_native_rejections_leave_identical_t0_store_state(tmp_path, config, clock):

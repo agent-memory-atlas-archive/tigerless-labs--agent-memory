@@ -48,3 +48,27 @@ token/cache totals and Host turn count when available.
 A run with no accepted complete submission, a timeout, an invalid id, a stale source, or an
 abnormal Host exit fails closed and never selects another reasoner. This limitation and the paired
 quality/latency evidence keep native mode experimental.
+
+## Authenticated Codex evidence
+
+The opt-in system test completed the whole CLI path with local Codex 0.162.0 and
+`gpt-5.6-sol` in 32.20 seconds: `mem sleep` generated a proposal, Codex called
+`read_evidence`, then `submit_verdicts`, and Manage validated and wrote the Store, Decision
+Ledger, and Dream Report. The test is skipped unless `AGENT_MEMORY_LIVE_CODEX=1` is set; the
+normal suite never depends on credentials or a network service.
+
+`tools/manage_review_benchmark.py` defines a fixed 12-case corpus across merge, supersede,
+split, abstract-review, and delete proposals. On 2026-10-19 one authenticated, paired run used
+four byte-identical Store pairs and alternated arm order. Text agreed with the fixed labels on
+9/12 cases; Native agreed on 10/12. Both arms had zero runtime errors and complete Ledger and
+Report output. Native read every target, using 26 successful tool calls (4 list, 18 read, 4
+submit). It reported 177,866 input, 137,728 cached-input, and 2,524 output tokens. The Text
+compatibility invocation did not expose token usage; its rendered prompts totalled 10,171
+characters.
+
+Native took 110.766 seconds versus Text's 59.496 seconds, 86.2% slower in this sample. Its one
+additional labelled agreement was an explicitly obsolete delete proposal; both arms rejected a
+labelled complementary merge and current-policy supersede. With 12 cases and one replay this is
+an integration sample, not an accuracy benchmark under the repository's experiment rules. The
+trace contained no repeated evidence reads, so the run did not justify a speculative performance
+commit. Native remains opt-in while a larger repeated corpus and Host portability are open work.
