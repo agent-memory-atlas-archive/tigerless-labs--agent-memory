@@ -274,7 +274,11 @@ submission returns to the existing Manage cap, open-proposal, source-hash, `deci
 Ledger, and Dream Report path. Missing or stale submissions fail the run without a success report
 or transport fallback. Endpoint Manage and other Hosts remain on text mode. Review tool calls,
 evidence reads, wall time, and Codex token/cache totals (when its JSONL stream supplies them) are
-recorded in the report. `manage.review_max_tool_calls`, `manage.review_tool_result_chars`, and
+recorded in the report. For Codex JSONL runs, wall time is also divided into startup (launch to
+the first lifecycle event), MCP call intervals, shutdown (completed turn to exit), and the
+remaining model/runtime wait; verdict application is timed separately inside Manage. These are
+latency diagnostics, not model-provider server timings. `manage.review_max_tool_calls`,
+`manage.review_tool_result_chars`, and
 `manage.review_evidence_chars` bound tool use; the executor timeout remains the hard process bound.
 
 Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the

@@ -337,9 +337,7 @@ def _run(root: pathlib.Path, batch: str, arm: str) -> dict[str, object]:
     missing = [case.id for case in cases if (case.kind, frozenset(case.targets)) not in by_key]
     if missing:
         raise RuntimeError(f"missing expected proposals: {missing}")
-    expected = {
-        by_key[(case.kind, frozenset(case.targets))].id: case for case in cases
-    }
+    expected = {by_key[(case.kind, frozenset(case.targets))].id: case for case in cases}
     before = _snapshot(store)
     reasoner = _reasoner(arm)
     started = time.monotonic()
@@ -352,9 +350,7 @@ def _run(root: pathlib.Path, batch: str, arm: str) -> dict[str, object]:
     elapsed = time.monotonic() - started
     after = _snapshot(store)
     decisions = (
-        {decision.proposal_id: decision.verdict for decision in report.decisions}
-        if report
-        else {}
+        {decision.proposal_id: decision.verdict for decision in report.decisions} if report else {}
     )
     reads = set(report.review.evidence_reads) if report and report.review else set()
     scored = []
@@ -391,6 +387,11 @@ def _run(root: pathlib.Path, batch: str, arm: str) -> dict[str, object]:
         "model_requests": review.model_requests if review else None,
         "duration_seconds": review.duration_seconds if review else elapsed,
         "wall_seconds": elapsed,
+        "startup_seconds": review.startup_seconds if review else None,
+        "model_wait_seconds": review.model_wait_seconds if review else None,
+        "mcp_seconds": review.mcp_seconds if review else None,
+        "shutdown_seconds": review.shutdown_seconds if review else None,
+        "apply_seconds": review.apply_seconds if review else None,
         "input_tokens": review.input_tokens if review else None,
         "cached_input_tokens": review.cached_input_tokens if review else None,
         "output_tokens": review.output_tokens if review else None,
@@ -408,6 +409,15 @@ def _summary(runs: list[dict[str, object]]) -> dict[str, object]:
         selected = [run for run in runs if run["arm"] == arm]
         cases = [case for run in selected for case in run["cases"]]
         durations = [float(run["wall_seconds"]) for run in selected]
+
+        def total(key: str, selected_runs=selected) -> float | None:
+            values = [run[key] for run in selected_runs]
+            return (
+                sum(float(value) for value in values if value is not None)
+                if all(value is not None for value in values)
+                else None
+            )
+
         arms[arm] = {
             "correct": sum(bool(case["correct"]) for case in cases),
             "total": len(cases),
@@ -416,17 +426,25 @@ def _summary(runs: list[dict[str, object]]) -> dict[str, object]:
             "tool_calls": sum(int(run["tool_calls"]) for run in selected),
             "wall_seconds": sum(durations),
             "median_batch_seconds": statistics.median(durations),
+            "startup_seconds": total("startup_seconds"),
+            "model_wait_seconds": total("model_wait_seconds"),
+            "mcp_seconds": total("mcp_seconds"),
+            "shutdown_seconds": total("shutdown_seconds"),
+            "apply_seconds": total("apply_seconds"),
             "input_tokens": sum(int(run["input_tokens"] or 0) for run in selected) or None,
-            "cached_input_tokens": sum(
-                int(run["cached_input_tokens"] or 0) for run in selected
-            )
+            "cached_input_tokens": sum(int(run["cached_input_tokens"] or 0) for run in selected)
             or None,
             "output_tokens": sum(int(run["output_tokens"] or 0) for run in selected) or None,
             "prompt_chars": sum(int(run["prompt_chars"] or 0) for run in selected) or None,
             "ledger_complete": all(bool(run["ledger"]) for run in selected),
             "report_complete": all(bool(run["report"]) for run in selected),
         }
-    return {"model": MODEL, "cases": len(CASES), "batches": 4, "arms": arms}
+    return {
+        "model": MODEL,
+        "cases": sum(int(run["total"]) for run in runs if run["arm"] == ARMS[0]),
+        "batches": len({str(run["batch"]) for run in runs}),
+        "arms": arms,
+    }
 
 
 def _markdown(summary: dict[str, object]) -> str:
@@ -441,9 +459,9 @@ def _markdown(summary: dict[str, object]) -> str:
         "",
         (
             "| Arm | Correct | Evidence complete | Tool calls | Wall s | "
-            "Median batch s | Tokens in/cache/out |"
+            "Median batch s | Startup/model/MCP/shutdown/apply s | Tokens in/cache/out |"
         ),
-        "|---|---:|---:|---:|---:|---:|---|",
+        "|---|---:|---:|---:|---:|---:|---|---|",
     ]
     for arm in ARMS:
         result = arms[arm]
@@ -451,6 +469,9 @@ def _markdown(summary: dict[str, object]) -> str:
             f"| {arm} | {result['correct']}/{result['total']} | "
             f"{result['evidence_complete']}/{result['total']} | {result['tool_calls']} | "
             f"{result['wall_seconds']:.3f} | {result['median_batch_seconds']:.3f} | "
+            f"{_seconds(result['startup_seconds'])}/{_seconds(result['model_wait_seconds'])}/"
+            f"{_seconds(result['mcp_seconds'])}/{_seconds(result['shutdown_seconds'])}/"
+            f"{_seconds(result['apply_seconds'])} | "
             f"{result['input_tokens']}/{result['cached_input_tokens']}/{result['output_tokens']} |"
         )
     lines.extend(
@@ -459,11 +480,16 @@ def _markdown(summary: dict[str, object]) -> str:
             "Text receives every target body in one prompt; its token totals are unavailable",
             "from the plain Codex compatibility invocation. Native receives summaries first",
             "and records actual MCP reads plus Codex JSONL usage. This is an integration sample,",
-            "not a benchmark score.",
+            "not a benchmark score. Native startup/model/MCP phases partition Host duration;",
+            "apply is measured separately in Manage.",
             "",
         ]
     )
     return "\n".join(lines)
+
+
+def _seconds(value: object) -> str:
+    return f"{float(value):.3f}" if value is not None else "n/a"
 
 
 def main() -> int:
@@ -471,6 +497,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--model", default=MODEL)
+    parser.add_argument(
+        "--batches",
+        nargs="+",
+        choices=("b1", "b2", "b3", "b4"),
+        default=("b1", "b2", "b3", "b4"),
+        help="run selected three-case batches (use two batches for a six-case diagnostic)",
+    )
     args = parser.parse_args()
     MODEL = args.model
     args.out.mkdir(parents=True, exist_ok=False)
@@ -479,7 +512,7 @@ def main() -> int:
     seeds.mkdir()
     stores.mkdir()
     runs = []
-    for number, batch in enumerate(("b1", "b2", "b3", "b4")):
+    for number, batch in enumerate(args.batches):
         seed_root = seeds / batch
         seed = Store(seed_root, config=_config(), agent="benchmark-seed")
         seed.init()
@@ -493,14 +526,12 @@ def main() -> int:
             run = _run(target, batch, arm)
             runs.append(run)
             keys = ("batch", "arm", "correct", "total", "wall_seconds", "error")
-            print(json.dumps({key: run[key] for key in keys}))
+            print(json.dumps({key: run[key] for key in keys}), flush=True)
     summary = _summary(runs)
     (args.out / "runs.json").write_text(json.dumps(runs, indent=2) + "\n", encoding="utf-8")
-    (args.out / "summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
-    )
+    (args.out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     (args.out / "summary.md").write_text(_markdown(summary), encoding="utf-8")
-    print(json.dumps(summary))
+    print(json.dumps(summary), flush=True)
     return 0
 
 

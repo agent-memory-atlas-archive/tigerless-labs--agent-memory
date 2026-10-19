@@ -43,7 +43,12 @@ evidence, and persist a trace for the library to absorb after Codex exits.
 surface; `[executor.manage].timeout_seconds` bounds the Host process. Codex's public CLI does not
 offer a model-step flag, so `review_max_steps` is an audit ceiling used with the tool budget rather
 than a claim that hidden model requests can be killed exactly. JSONL `turn.completed` supplies
-token/cache totals and Host turn count when available.
+token/cache totals and Host turn count when available. The executor timestamps JSONL lifecycle
+events as they arrive: startup ends at the first event, MCP spans matched `mcp_tool_call`
+start/completion events, shutdown begins at `turn.completed`, and the residual Host duration is
+reported as model/runtime wait. Manage separately times its existing verdict validation and apply
+loop. The four Host phases add to Host duration; they expose transport shape without retaining
+reasoning text or granting a new capability.
 
 A run with no accepted complete submission, a timeout, an invalid id, a stale source, or an
 abnormal Host exit fails closed and never selects another reasoner. This limitation and the paired
@@ -72,3 +77,18 @@ labelled complementary merge and current-policy supersede. With 12 cases and one
 an integration sample, not an accuracy benchmark under the repository's experiment rules. The
 trace contained no repeated evidence reads, so the run did not justify a speculative performance
 commit. Native remains opt-in while a larger repeated corpus and Host portability are open work.
+
+## Follow-up phase diagnostic
+
+On 2026-10-19 a bounded follow-up replay selected b1 and b2 only: six cases, two paired batches,
+four Codex invocations. Native completed all six evidence checks and all 13 tool calls without an
+error. Its 69.593 seconds of Host duration split into 3.115 seconds startup, 53.622 seconds
+model/runtime wait, 0.050 seconds MCP calls, and 12.806 seconds shutdown; Manage apply added 0.137
+seconds. MCP plus apply were under 0.3% of Native wall time.
+
+Text completed too, but its b2 call took 232.049 seconds while b1 took 17.927 seconds, so this
+single replay does not support an arm-level speed comparison. It does isolate the Native cost
+shape: measured MCP execution and Manage apply are not the bottleneck. Because every requested
+target was read exactly once and MCP time was negligible, the evidence did not license even a
+small speculative preload. The implementation therefore keeps the original ReAct loop, summary-
+first prompt, on-demand evidence reads, and permission boundary unchanged.
