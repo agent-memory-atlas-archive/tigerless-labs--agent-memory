@@ -11,6 +11,15 @@ host's built-in tools, user configuration, rules and native memory are off. Clau
 replace their system instructions; Hermes and Muse put the same ordered material in one prompt file.
 Claude's bare mode stays unused because it drops OAuth and would break zero-key install.
 
+Manage native review reuses the same one-process Codex transport, not the Write toolkit or Write
+loop. It is opt-in under `[executor.manage]` and exposes one separately named per-run MCP server
+with only proposal listing, proposal-scoped evidence reads, and structured verdict submission.
+Codex runs ephemeral with user config, rules, built-in tools, personal memory, and filesystem
+writes disabled. The MCP adapter persists the tool trace across the process boundary; it never
+applies a verdict. Manage rechecks source versions, proposal membership, per-kind caps, and Store
+rules before the existing decision path writes anything. Endpoint and non-Codex Manage reasoners
+retain the text protocol.
+
 Muse native Write is the automatic Write posture. Muse 1.4.4 added exact MCP selection through
 `run.toolset`; native mode supplies that selection as a one-run override and stages one required
 server in the already-isolated Muse settings. Older CLIs fail with a version-specific error in

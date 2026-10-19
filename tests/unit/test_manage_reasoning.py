@@ -1,15 +1,25 @@
 """The reasoning pass: judgement is borrowed, authority is not."""
 
 import json
+import pathlib
 
 import pytest
+from agent_memory.core.errors import ValidationError
 from agent_memory.core.manage import (
     PROPOSAL_ABSTRACT_REVIEW,
     PROPOSAL_MERGE,
     PROPOSAL_SUPERSEDE,
     Manage,
 )
-from agent_memory.core.reasoning import ReviewLimits, parse, prepare, render
+from agent_memory.core.manage_toolkit import (
+    ARG_NAME,
+    ARG_PROPOSAL,
+    ARG_VERDICTS,
+    TOOL_LIST,
+    TOOL_READ,
+    TOOL_SUBMIT,
+)
+from agent_memory.core.reasoning import ReviewLimits, ReviewRuntime, parse, prepare, render
 
 
 class Recorder:
@@ -22,6 +32,39 @@ class Recorder:
     def __call__(self, prompt: str) -> str:
         self.prompts.append(prompt)
         return self.replies.pop(0) if self.replies else ""
+
+
+class NativeRecorder:
+    def __init__(self, submit=True):
+        self.submit = submit
+        self.calls = 0
+        self.material = ""
+
+    def __call__(self, prompt):
+        raise AssertionError("native review must not use the text protocol")
+
+    def review_converse(self, instructions, material, kit):
+        self.calls += 1
+        self.material = material
+        assert "submit_verdicts" in instructions
+        kit.call(TOOL_LIST, {})
+        for proposal in kit.request.proposals:
+            for source in proposal.sources:
+                kit.call(
+                    TOOL_READ,
+                    {ARG_PROPOSAL: proposal.id, ARG_NAME: source.name},
+                )
+        if self.submit:
+            kit.call(
+                TOOL_SUBMIT,
+                {
+                    ARG_VERDICTS: [
+                        {"proposal": proposal.id, "verdict": "reject"}
+                        for proposal in kit.request.proposals
+                    ]
+                },
+            )
+        return ReviewRuntime(duration_seconds=0.25)
 
 
 def _twins(store):
@@ -243,3 +286,40 @@ def test_review_request_freezes_scoped_sources_and_their_hashes(seeded):
         target for proposal in proposals for target in proposal.targets
     }
     assert render(request) == render(proposals, seeded.records())
+
+
+def test_native_review_reads_evidence_submits_tools_and_reuses_manage_apply(seeded):
+    _twins(seeded)
+    reasoner = NativeRecorder()
+    report = Manage(seeded).sleep(reasoner=reasoner)
+
+    assert reasoner.calls == 1
+    assert "Longer body carrying" not in reasoner.material
+    assert report.review is not None
+    assert report.review.mode == "native"
+    assert report.review.complete
+    assert report.review.duration_seconds == 0.25
+    assert report.review.evidence_reads
+    assert [name for name, _ in report.review.tool_trace] == [
+        TOOL_LIST,
+        *[TOOL_READ for _ in report.review.evidence_reads],
+        TOOL_SUBMIT,
+    ]
+    assert all(decision.verdict == "rejected" for decision in report.decisions)
+    written = pathlib.Path(report.path).read_text()
+    assert "## review execution" in written
+    assert "read_evidence" in written and "submit_verdicts" in written
+
+
+def test_native_review_without_a_complete_submission_fails_before_a_report(seeded):
+    _twins(seeded)
+    with pytest.raises(ValidationError, match="submitted no complete verdict set"):
+        Manage(seeded).sleep(reasoner=NativeRecorder(submit=False))
+    assert not list(seeded.layout.dream_reports.glob("*.md"))
+
+
+def test_no_proposals_skips_the_native_model_call(store):
+    reasoner = NativeRecorder()
+    report = Manage(store).sleep(reasoner=reasoner)
+    assert reasoner.calls == 0
+    assert report.review is None

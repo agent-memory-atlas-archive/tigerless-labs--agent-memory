@@ -239,6 +239,8 @@ tool_mode = "auto" # supported Hosts use native tools; use "text" for compatibil
 [executor.manage]
 reasoner = "host"
 host = "codex"
+tool_mode = "text" # set "native" for the experimental bounded Codex reviewer
+timeout_seconds = 120
 ```
 
 For `mem distill` and `mem sleep`, `--reason`, `--reason-host`, and `--reason-model` override the
@@ -261,9 +263,19 @@ adapter expands Responses API namespace tools to Muse's canonical MCP ids; it ne
 tools nor holds credentials. Hermes uses a temporary profile, an exact dynamic MCP toolset,
 and a provider selected independently of the model; OpenRouter therefore needs no Vertex project
 or gcloud authentication. `tool_mode = "text"` forces the compatibility protocol for a Host. A run that ends
-without an accepted submission writes nothing and leaves the backlog for retry. `tool_mode`
-applies only to Write Host reasoners; endpoint Write remains native function calling and Manage
-review remains the bounded text-verdict path.
+without an accepted submission writes nothing and leaves the backlog for retry.
+
+Manage keeps the text-verdict path by default. An explicit
+`[executor.manage] tool_mode = "native"` selects the experimental Codex reviewer. It starts one
+ephemeral, read-only Codex process with only `list_proposals`, `read_evidence`, and
+`submit_verdicts`; proposal summaries arrive first and bodies are opened on demand. These tools
+cannot record, correct, supersede, merge, delete, or access arbitrary paths. A complete structured
+submission returns to the existing Manage cap, open-proposal, source-hash, `decide()`, Store,
+Ledger, and Dream Report path. Missing or stale submissions fail the run without a success report
+or transport fallback. Endpoint Manage and other Hosts remain on text mode. Review tool calls,
+evidence reads, wall time, and Codex token/cache totals (when its JSONL stream supplies them) are
+recorded in the report. `manage.review_max_tool_calls`, `manage.review_tool_result_chars`, and
+`manage.review_evidence_chars` bound tool use; the executor timeout remains the hard process bound.
 
 Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
 usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's

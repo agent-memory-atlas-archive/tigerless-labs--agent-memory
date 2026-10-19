@@ -46,9 +46,7 @@ CLAUDE_NATIVE_TOOLS = "Write,Edit,NotebookEdit,WebSearch,WebFetch,Task"
 HERMES_TOOLSETS = "terminal"
 HERMES_WRITE_SERVER_NAME = "agent-memory-write"
 HERMES_NATIVE_MAX_TURNS = 8
-HERMES_NATIVE_WRITE_REQUIREMENT = (
-    "Hermes native Write tools require Hermes Agent 0.22.2 or newer"
-)
+HERMES_NATIVE_WRITE_REQUIREMENT = "Hermes native Write tools require Hermes Agent 0.22.2 or newer"
 HERMES_DATA_TRAINING_REQUIREMENT = (
     "Hermes contributor models require host_allow_data_training = true"
 )
@@ -90,6 +88,15 @@ class HostResult:
     ok: bool
     seconds: float
     error: str = ""
+    usage: HostUsage | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class HostUsage:
+    turns: int
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -272,6 +279,7 @@ class CodexDialect(Dialect):
             spec.model,
             "--skip-git-repo-check",
             "--ephemeral",
+            "--json",
             "--ignore-user-config",
             "--ignore-rules",
             "--sandbox",
@@ -505,8 +513,7 @@ class MuseCodeDialect(Dialect):
 
     def disables_native_memory(self, rendered_command: str) -> bool:
         return all(
-            flag in rendered_command
-            for flag in ("--workspace", "--no-foreign-personal-context")
+            flag in rendered_command for flag in ("--workspace", "--no-foreign-personal-context")
         )
 
     @staticmethod
@@ -584,10 +591,13 @@ class Host:
         system_prompt: str,
         server: ToolServer,
         environment: dict[str, str] | None = None,
+        timeout_seconds: float | None = None,
     ) -> HostResult:
         """One headless run in which the host's own loop calls only the server's tools."""
         return self._retrying(
-            lambda: self._converse_attempt(prompt, system_prompt, server, environment or {})
+            lambda: self._converse_attempt(
+                prompt, system_prompt, server, environment or {}, timeout_seconds
+            )
         )
 
     def _retrying(self, attempt: Callable[[], HostResult]) -> HostResult:
@@ -609,6 +619,7 @@ class Host:
         system_prompt: str,
         server: ToolServer,
         environment: dict[str, str],
+        timeout_seconds: float | None,
     ) -> HostResult:
         with tempfile.TemporaryDirectory() as scratch:
             scratch_path = pathlib.Path(scratch)
@@ -633,9 +644,7 @@ class Host:
                 # workspace share the /tmp tree. Muse creates and cleans its own unique child.
                 environment["TMPDIR"] = MUSE_RUNTIME_TMPDIR
                 self._stage_muse_tool_server(environment, server)
-                settings = (
-                    pathlib.Path(environment["XDG_CONFIG_HOME"]) / "muse" / "settings.json"
-                )
+                settings = pathlib.Path(environment["XDG_CONFIG_HOME"]) / "muse" / "settings.json"
                 command, prompt = self.dialect.invocation(
                     command, prompt, system_prompt, scratch_path
                 )
@@ -648,6 +657,7 @@ class Host:
                     scratch_path,
                     answer_file,
                     require_answer=False,
+                    timeout_seconds=timeout_seconds,
                 )
 
             if settings is not None:
@@ -752,9 +762,7 @@ class Host:
             )
             if self.spec.name == HOST_CODEX and tools_enabled and environment.get(observation.ENV):
                 command += ["--add-dir", environment[observation.ENV]]
-            command, payload = self.dialect.invocation(
-                command, prompt, system_prompt, scratch_path
-            )
+            command, payload = self.dialect.invocation(command, prompt, system_prompt, scratch_path)
             if self.spec.name == HOST_MUSE_CODE:
                 environment = self._isolated_muse_environment(environment, scratch_path)
 
@@ -778,9 +786,7 @@ class Host:
             return invoke()
 
     @staticmethod
-    def _isolated_muse_environment(
-        extra: dict[str, str], scratch: pathlib.Path
-    ) -> dict[str, str]:
+    def _isolated_muse_environment(extra: dict[str, str], scratch: pathlib.Path) -> dict[str, str]:
         """Keep personal Muse context out while reusing credential and provider routing."""
         source = {**os.environ, **extra}
         source_home = pathlib.Path(source.get("HOME", "~")).expanduser()
@@ -868,6 +874,7 @@ class Host:
         workdir: pathlib.Path | None,
         answer_file: pathlib.Path,
         require_answer: bool = True,
+        timeout_seconds: float | None = None,
     ) -> HostResult:
         started = time.monotonic()
         evidence = environment.get(observation.ENV)
@@ -893,7 +900,7 @@ class Host:
                 input=payload,
                 capture_output=True,
                 text=True,
-                timeout=self.spec.timeout_seconds,
+                timeout=timeout_seconds or self.spec.timeout_seconds,
                 env=environment,
                 cwd=str(workdir) if workdir else None,
                 check=False,
@@ -938,7 +945,7 @@ class Host:
         if require_answer and self.spec.name in (HOST_CODEX, HOST_MUSE_CODE) and not text:
             label = "Codex" if self.spec.name == HOST_CODEX else "Muse"
             return HostResult("", False, elapsed, f"missing or empty {label} final message")
-        return HostResult(text, True, elapsed)
+        return HostResult(text, True, elapsed, usage=_host_usage(completed.stdout))
 
     def _environment(
         self, store_root: pathlib.Path | None, extra: dict[str, str]
@@ -955,3 +962,32 @@ class Host:
         if self.credentials is not None:
             environment.update(self.credentials.environment())
         return environment
+
+
+def _host_usage(stdout: str) -> HostUsage | None:
+    turns = 0
+    totals = {
+        "input_tokens": 0,
+        "cached_input_tokens": 0,
+        "output_tokens": 0,
+    }
+    found = False
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "turn.completed":
+            continue
+        turns += 1
+        usage = event.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        found = True
+        for key in totals:
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] += value
+    if not found:
+        return None
+    return HostUsage(turns=turns, **totals)

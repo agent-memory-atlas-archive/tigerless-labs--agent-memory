@@ -25,6 +25,8 @@ import urllib.request
 
 from agent_memory.core.config import EXECUTOR_ENV_VAR
 from agent_memory.core.errors import ReasonerUnavailableError
+from agent_memory.core.manage_toolkit import ManageReviewToolkit
+from agent_memory.core.reasoning import ReviewRuntime
 from agent_memory.core.toolkit import WriteToolkit
 
 from .credentials import API_KEY_ENV, BASE_URL_ENV, VertexCredentials
@@ -40,6 +42,8 @@ ROLE_TOOL = "tool"
 EMPTY = ""
 TOOL_SERVER_NAME = "memory"
 WRITE_SESSION_MODULE = "agent_memory.mcp.write_session"
+MANAGE_SESSION_MODULE = "agent_memory.mcp.manage_session"
+MANAGE_TOOL_SERVER_NAME = "memory_review"
 MALFORMED_ARGUMENTS = "tool arguments must be a JSON object"
 CLAUDE_BUNDLED_ENV = "CLAUDE_CODE_EXECPATH"
 
@@ -62,9 +66,7 @@ class HostReasoner:
             raise _host_failure(self.host, result)
         if not result.text.strip():
             name = getattr(self.host, "name", "configured host")
-            raise ReasonerUnavailableError(
-                f"host reasoner returned an empty response for {name}"
-            )
+            raise ReasonerUnavailableError(f"host reasoner returned an empty response for {name}")
         return result.text
 
     @classmethod
@@ -100,13 +102,52 @@ class ToolHostReasoner(HostReasoner):
     """The host CLI as a tool-use agent: one run per batch, the toolkit served over MCP."""
 
     def converse(self, instructions: str, material: str, toolkit: WriteToolkit) -> None:
+        self._converse(
+            instructions,
+            material,
+            toolkit,
+            server_name=TOOL_SERVER_NAME,
+            module=WRITE_SESSION_MODULE,
+        )
+
+    def review_converse(
+        self, instructions: str, material: str, toolkit: ManageReviewToolkit
+    ) -> ReviewRuntime:
+        """Run one bounded native Manage review and return measured Host wall time."""
+        result = self._converse(
+            instructions,
+            material,
+            toolkit,
+            server_name=MANAGE_TOOL_SERVER_NAME,
+            module=MANAGE_SESSION_MODULE,
+            timeout_seconds=toolkit.request.limits.timeout_seconds,
+        )
+        usage = result.usage
+        return ReviewRuntime(
+            duration_seconds=result.seconds,
+            agent_turns=usage.turns if usage else None,
+            input_tokens=usage.input_tokens if usage else None,
+            cached_input_tokens=usage.cached_input_tokens if usage else None,
+            output_tokens=usage.output_tokens if usage else None,
+        )
+
+    def _converse(
+        self,
+        instructions: str,
+        material: str,
+        toolkit: WriteToolkit | ManageReviewToolkit,
+        *,
+        server_name: str,
+        module: str,
+        timeout_seconds: float | None = None,
+    ) -> HostResult:
         with tempfile.TemporaryDirectory() as batch:
             directory = pathlib.Path(batch)
             toolkit.save_seed(directory)
             server = ToolServer(
-                name=TOOL_SERVER_NAME,
+                name=server_name,
                 command=sys.executable,
-                args=("-m", WRITE_SESSION_MODULE, str(directory)),
+                args=("-m", module, str(directory)),
                 tools=tuple(spec.name for spec in toolkit.catalogue()),
             )
             result = self.host.converse(
@@ -114,10 +155,12 @@ class ToolHostReasoner(HostReasoner):
                 system_prompt=instructions,
                 server=server,
                 environment={EXECUTOR_ENV_VAR: "1"},
+                timeout_seconds=timeout_seconds,
             )
             if not result.ok:
                 raise _host_failure(self.host, result)
             toolkit.absorb_directory(directory)
+            return result
 
 
 def _host_failure(host: Host, result: HostResult) -> ReasonerUnavailableError:

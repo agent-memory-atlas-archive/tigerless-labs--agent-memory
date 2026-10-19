@@ -113,7 +113,8 @@ class ManageReviewToolkit:
 
     def call(self, name: str, arguments: object) -> ToolReply:
         given = arguments if isinstance(arguments, dict) else {}
-        if len(self.calls) >= self.request.limits.max_tool_calls:
+        budget = min(self.request.limits.max_tool_calls, self.request.limits.max_steps)
+        if len(self.calls) >= budget:
             reply = ToolReply("review tool-call budget exhausted", True)
         elif name == TOOL_LIST:
             reply = self._list(given)
@@ -133,8 +134,11 @@ class ManageReviewToolkit:
             verdicts=self.submission or (),
             submitted=submitted,
             complete=submitted,
+            mode="native",
             rounds=min(len(self.calls) + 1, self.request.limits.max_steps),
             tool_calls=len(self.calls),
+            evidence_reads=tuple(self.evidence_reads),
+            tool_trace=tuple((call.name, call.reply.is_error) for call in self.calls),
             error="" if submitted else "native reviewer submitted no complete verdict set",
         )
 

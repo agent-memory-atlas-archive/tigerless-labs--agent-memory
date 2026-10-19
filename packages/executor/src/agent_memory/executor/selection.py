@@ -8,6 +8,7 @@ from agent_memory.core.config import (
     REASONER_ENDPOINT,
     REASONER_HOST,
     TOOL_MODE_AUTO,
+    TOOL_MODE_NATIVE,
     TOOL_MODE_TEXT,
     ExecutorConfig,
     OperationExecutorConfig,
@@ -18,6 +19,7 @@ WRITE = "write"
 MANAGE = "manage"
 OPERATIONS = (WRITE, MANAGE)
 SOURCE = "source"
+NATIVE_MANAGE_HOST = "codex"
 
 
 def resolve(
@@ -32,9 +34,9 @@ def resolve(
     if operation not in OPERATIONS:
         raise ReasonerUnavailableError(f"unsupported memory operation: {operation}")
     policy: OperationExecutorConfig = getattr(config, operation)
-    if operation == MANAGE and policy.tool_mode:
+    if operation == MANAGE and policy.tool_mode not in ("", TOOL_MODE_NATIVE, TOOL_MODE_TEXT):
         raise ReasonerUnavailableError(
-            "manage tool_mode is not supported; Manage review still uses the text protocol"
+            f"unsupported Manage tool mode {policy.tool_mode!r}; use native or text"
         )
     chosen = dataclasses.replace(
         config,
@@ -50,7 +52,9 @@ def resolve(
         project=policy.project or config.project,
         location=policy.location or config.location,
         timeout_seconds=policy.timeout_seconds or config.timeout_seconds,
-        tool_mode=(policy.tool_mode or config.tool_mode) if operation == WRITE else TOOL_MODE_TEXT,
+        tool_mode=(policy.tool_mode or config.tool_mode)
+        if operation == WRITE
+        else (policy.tool_mode or TOOL_MODE_TEXT),
     )
 
     selected_host = chosen.host
@@ -86,4 +90,13 @@ def resolve(
         raise ReasonerUnavailableError("write tool_mode applies only to host reasoners")
     if chosen.reasoner == REASONER_HOST and not chosen.host.strip():
         raise ReasonerUnavailableError(f"{operation} host reasoner requires a host")
+    if operation == MANAGE and chosen.tool_mode == TOOL_MODE_NATIVE:
+        if chosen.reasoner != REASONER_HOST:
+            raise ReasonerUnavailableError(
+                "native Manage review currently requires a host reasoner"
+            )
+        if chosen.host != NATIVE_MANAGE_HOST:
+            raise ReasonerUnavailableError(
+                f"native Manage review currently supports only {NATIVE_MANAGE_HOST}"
+            )
     return chosen

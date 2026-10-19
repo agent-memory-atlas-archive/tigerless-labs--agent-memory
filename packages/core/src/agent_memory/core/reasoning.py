@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -26,6 +27,7 @@ from . import prompts
 from .record import MemoryRecord
 
 if TYPE_CHECKING:
+    from .manage_toolkit import ManageReviewToolkit
     from .toolkit import WriteToolkit
 
 VERDICT_ACCEPT = "accept"
@@ -56,6 +58,15 @@ class ToolReasoner(Protocol):
     def __call__(self, prompt: str) -> str: ...
 
     def converse(self, instructions: str, material: str, toolkit: WriteToolkit) -> None: ...
+
+
+@runtime_checkable
+class ManageToolReasoner(Protocol):
+    """A Host-owned native loop over the strictly scoped Manage review toolkit."""
+
+    def review_converse(
+        self, instructions: str, material: str, toolkit: ManageReviewToolkit
+    ) -> ReviewRuntime: ...
 
 
 class Draft(Protocol):
@@ -167,9 +178,28 @@ class ReviewOutcome:
     verdicts: tuple[Verdict, ...]
     submitted: bool
     complete: bool
+    mode: str = "text"
     rounds: int = 1
     tool_calls: int = 0
+    duration_seconds: float = 0.0
+    model_requests: int | None = None
+    agent_turns: int | None = None
+    input_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    output_tokens: int | None = None
+    evidence_reads: tuple[tuple[str, str], ...] = ()
+    tool_trace: tuple[tuple[str, bool], ...] = ()
     error: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewRuntime:
+    duration_seconds: float
+    model_requests: int | None = None
+    agent_turns: int | None = None
+    input_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 def prepare(
@@ -202,13 +232,28 @@ def prepare(
 
 def review_text(request: ReviewRequest, reasoner: Reasoner) -> ReviewOutcome:
     """Compatibility implementation: one prompt in, line-oriented verdicts out."""
+    started = time.monotonic()
     reply = reasoner(render(request))
     verdicts = tuple(parse(reply))
     return ReviewOutcome(
         verdicts=verdicts,
         submitted=bool(verdicts),
         complete=bool(verdicts),
+        mode="text",
+        duration_seconds=time.monotonic() - started,
+        model_requests=1,
+        agent_turns=1,
     )
+
+
+def native_instructions() -> str:
+    return prompts.MANAGE_NATIVE_REVIEW
+
+
+def native_material(request: ReviewRequest) -> str:
+    """Send proposal summaries first; bodies remain behind scoped, observable reads."""
+    proposals = [proposal.as_dict() for proposal in request.proposals]
+    return json.dumps({"proposals": proposals}, sort_keys=True)
 
 
 def render(

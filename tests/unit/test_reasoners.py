@@ -2,6 +2,8 @@
 
 import io
 import json
+import pathlib
+import subprocess
 
 import pytest
 from agent_memory.core.errors import ReasonerUnavailableError
@@ -112,6 +114,34 @@ def test_an_unknown_host_reasoner_fails_closed_instead_of_using_another_dialect(
         HostReasoner.for_host("not-a-host")
 
 
+def test_codex_jsonl_usage_is_retained_for_native_review_metrics(tmp_path, monkeypatch):
+    from agent_memory.executor import hosts
+
+    def run(command, **kwargs):
+        pathlib.Path(command[command.index("--output-last-message") + 1]).write_text("done")
+        stdout = json.dumps(
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 120,
+                    "cached_input_tokens": 80,
+                    "output_tokens": 12,
+                },
+            }
+        )
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(hosts.subprocess, "run", run)
+    host = hosts.Host(hosts.HostSpec(name="codex", binary="codex", attempts=1))
+    result = host.run("review", workdir=tmp_path)
+
+    assert result.ok and result.usage is not None
+    assert result.usage.turns == 1
+    assert result.usage.input_tokens == 120
+    assert result.usage.cached_input_tokens == 80
+    assert result.usage.output_tokens == 12
+
+
 def test_a_host_reasoner_marks_its_session_as_the_executor_so_hooks_stand_down():
     from agent_memory.core.config import EXECUTOR_ENV_VAR
 
@@ -147,6 +177,7 @@ def test_additional_native_write_tools_are_automatic_and_text_can_be_forced(name
     from agent_memory.core.config import TOOL_MODE_TEXT, ExecutorConfig
     from agent_memory.core.reasoning import ToolReasoner
     from agent_memory.executor import distiller
+
     native = distiller.distiller(ExecutorConfig(host=name))
     text = distiller.distiller(ExecutorConfig(host=name, tool_mode=TOOL_MODE_TEXT))
 
@@ -158,6 +189,7 @@ def test_native_write_tools_fail_closed_for_an_unknown_host():
     from agent_memory.core.config import TOOL_MODE_NATIVE, ExecutorConfig
     from agent_memory.core.errors import ReasonerUnavailableError
     from agent_memory.executor import distiller
+
     with pytest.raises(ReasonerUnavailableError, match="does not support native Write tools"):
         distiller.distiller(ExecutorConfig(host="unknown", tool_mode=TOOL_MODE_NATIVE))
 
@@ -235,9 +267,7 @@ def test_an_explicit_vertex_project_does_not_borrow_an_unrelated_api_key(monkeyp
         return io.BytesIO(_reply("verdict line"))
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    reasoner = EndpointReasoner(
-        credentials=UserVertex(project="user-project", location="global")
-    )
+    reasoner = EndpointReasoner(credentials=UserVertex(project="user-project", location="global"))
 
     assert reasoner("review this") == "verdict line"
     assert "/projects/user-project/" in sent["url"]

@@ -100,6 +100,7 @@ class DreamReport:
     withheld: tuple[str, ...] = ()
     committed: bool = False
     dream_id: str = ""
+    review: reasoning.ReviewOutcome | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -112,6 +113,7 @@ class DreamReport:
             "committed": self.committed,
             "path": self.path,
             "dream_id": self.dream_id,
+            "review": _review_dict(self.review),
         }
 
 
@@ -148,7 +150,7 @@ class Manage:
 
         records = self._store.records()
         proposals = self.proposals(records=records, hits=hits)
-        decisions, withheld = self._review(proposals, records, reasoner)
+        decisions, withheld, review = self._review(proposals, records, reasoner)
         settled = {decision.proposal_id for decision in decisions}
 
         report = DreamReport(
@@ -159,6 +161,7 @@ class Manage:
             decisions=decisions,
             withheld=withheld,
             dream_id=dream_id,
+            review=review,
         )
         report = dataclasses.replace(report, path=str(self._write_report(report)))
         return dataclasses.replace(report, committed=self._commit(report))
@@ -168,14 +171,34 @@ class Manage:
         proposals: list[Proposal],
         records: list[MemoryRecord],
         reasoner: reasoning.Reasoner | None,
-    ) -> tuple[tuple[Decision, ...], tuple[str, ...]]:
+    ) -> tuple[tuple[Decision, ...], tuple[str, ...], reasoning.ReviewOutcome | None]:
         """A reasoner may refuse anything and accept up to the per-kind cap; a verdict on
         something that is not open, or that an earlier verdict invalidated, is dropped."""
         if reasoner is None or not proposals:
-            return (), ()
+            return (), (), None
         request = reasoning.prepare(proposals, records, self._review_limits())
-        outcome = reasoning.review_text(request, reasoner)
+        if isinstance(reasoner, reasoning.ManageToolReasoner):
+            from .manage_toolkit import ManageReviewToolkit
+
+            kit = ManageReviewToolkit(self._store, request)
+            runtime = reasoner.review_converse(
+                reasoning.native_instructions(), reasoning.native_material(request), kit
+            )
+            outcome = dataclasses.replace(
+                kit.outcome(),
+                duration_seconds=runtime.duration_seconds,
+                model_requests=runtime.model_requests,
+                agent_turns=runtime.agent_turns,
+                input_tokens=runtime.input_tokens,
+                cached_input_tokens=runtime.cached_input_tokens,
+                output_tokens=runtime.output_tokens,
+            )
+            if not outcome.complete:
+                raise ValidationError([FieldError("review", outcome.error)])
+        else:
+            outcome = reasoning.review_text(request, reasoner)
         open_now = {proposal.id: proposal for proposal in proposals}
+        reviewed = {proposal.id: proposal for proposal in request.proposals}
         caps = self._caps()
         accepted: dict[str, int] = {}
         decisions: list[Decision] = []
@@ -188,13 +211,20 @@ class Manage:
                 withheld.append(proposal.id)
                 continue
             try:
-                decisions.append(self.decide(proposal.id, accept=verdict.accept, verdict=verdict))
+                decisions.append(
+                    self.decide(
+                        proposal.id,
+                        accept=verdict.accept,
+                        verdict=verdict,
+                        expected_sources=reviewed[proposal.id].sources,
+                    )
+                )
             except MemoryStoreError:
                 withheld.append(proposal.id)
                 continue
             if verdict.accept:
                 accepted[proposal.kind] = accepted.get(proposal.kind, 0) + 1
-        return tuple(decisions), tuple(withheld)
+        return tuple(decisions), tuple(withheld), outcome
 
     def _review_limits(self) -> reasoning.ReviewLimits:
         manage = self._config.manage
@@ -237,9 +267,12 @@ class Manage:
         accept: bool,
         text: str = "",
         verdict: reasoning.Verdict | None = None,
+        *,
+        expected_sources: tuple[reasoning.ReviewSource, ...] = (),
     ) -> Decision:
         """Rule on one proposal. Acceptance applies it through the write path."""
         proposal = self._open(proposal_id)
+        self._require_sources(expected_sources)
         content = verdict or reasoning.Verdict(proposal_id, accept, text=text)
         detail = self._apply(proposal, content) if accept else ""
         return self._ledger().append(
@@ -250,6 +283,18 @@ class Manage:
                 detail=detail,
             )
         )
+
+    def _require_sources(self, sources: tuple[reasoning.ReviewSource, ...]) -> None:
+        for source in sources:
+            current = self._store.find(source.name)
+            if current is None or not current.is_active():
+                raise ValidationError(
+                    [FieldError("proposal", f"source {source.name} is no longer active")]
+                )
+            if current.source_hash != source.source_hash:
+                raise ValidationError(
+                    [FieldError("proposal", f"source {source.name} changed during review")]
+                )
 
     def _open(self, proposal_id: str) -> Proposal:
         for proposal in self.proposals():
@@ -690,6 +735,31 @@ class Manage:
         if report.withheld:
             lines.extend(["", "## withheld (over the cap or refused by the write path)", ""])
             lines.extend(f"- {proposal_id}" for proposal_id in report.withheld)
+        if report.review is not None:
+            lines.extend(["", "## review execution", ""])
+            lines.extend(
+                [
+                    f"- submitted: {str(report.review.submitted).lower()}",
+                    f"- complete: {str(report.review.complete).lower()}",
+                    f"- rounds: {report.review.rounds}",
+                    f"- tool_calls: {report.review.tool_calls}",
+                    f"- duration_seconds: {report.review.duration_seconds:.3f}",
+                    f"- model_requests: {_metric(report.review.model_requests)}",
+                    f"- agent_turns: {_metric(report.review.agent_turns)}",
+                    f"- input_tokens: {_metric(report.review.input_tokens)}",
+                    f"- cached_input_tokens: {_metric(report.review.cached_input_tokens)}",
+                    f"- output_tokens: {_metric(report.review.output_tokens)}",
+                    "- evidence_reads: "
+                    + ", ".join(
+                        f"{proposal}/{name}" for proposal, name in report.review.evidence_reads
+                    ),
+                    "- tool_trace: "
+                    + ", ".join(
+                        f"{name}{'!error' if failed else ''}"
+                        for name, failed in report.review.tool_trace
+                    ),
+                ]
+            )
         rendered = "\n".join(lines) + "\n"
         with tempfile.NamedTemporaryFile(
             "w", dir=path.parent, delete=False, encoding="utf-8"
@@ -747,6 +817,33 @@ class Manage:
     def last_sleep(self) -> dt.datetime | None:
         """Latest completed report, including stable-id reports from automatic workers."""
         return self._last_sleep()
+
+
+def _review_dict(outcome: reasoning.ReviewOutcome | None) -> dict[str, object] | None:
+    if outcome is None:
+        return None
+    return {
+        "mode": outcome.mode,
+        "submitted": outcome.submitted,
+        "complete": outcome.complete,
+        "rounds": outcome.rounds,
+        "tool_calls": outcome.tool_calls,
+        "duration_seconds": outcome.duration_seconds,
+        "model_requests": outcome.model_requests,
+        "agent_turns": outcome.agent_turns,
+        "input_tokens": outcome.input_tokens,
+        "cached_input_tokens": outcome.cached_input_tokens,
+        "output_tokens": outcome.output_tokens,
+        "evidence_reads": [list(item) for item in outcome.evidence_reads],
+        "tool_trace": [
+            {"name": name, "is_error": is_error} for name, is_error in outcome.tool_trace
+        ],
+        "error": outcome.error,
+    }
+
+
+def _metric(value: int | None) -> str:
+    return str(value) if value is not None else "unavailable"
 
 
 def _tokens(text: str) -> set[str]:

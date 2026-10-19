@@ -154,11 +154,31 @@ def test_write_tool_mode_is_operation_scoped_and_muse_native_can_be_explicit():
     assert not isinstance(distiller.distiller(manage_config), ToolReasoner)
 
 
-def test_manage_cannot_claim_the_write_native_tool_mode():
+def test_manage_native_mode_is_explicit_and_currently_codex_only():
     executor = Config.default().executor
     executor.manage = OperationExecutorConfig(tool_mode=TOOL_MODE_NATIVE)
 
-    with pytest.raises(ReasonerUnavailableError, match="Manage review still uses the text"):
+    with pytest.raises(ReasonerUnavailableError, match="supports only codex"):
+        selection.resolve(executor, selection.MANAGE)
+
+    executor.manage = OperationExecutorConfig(
+        reasoner="host", host="codex", tool_mode=TOOL_MODE_NATIVE
+    )
+    configured = selection.resolve(executor, selection.MANAGE)
+    assert configured.tool_mode == TOOL_MODE_NATIVE
+    assert isinstance(distiller.distiller(configured), ToolReasoner)
+
+
+def test_manage_native_mode_rejects_endpoint_and_unverified_hosts():
+    executor = Config.default().executor
+    executor.manage = OperationExecutorConfig(reasoner="endpoint", tool_mode=TOOL_MODE_NATIVE)
+    with pytest.raises(ReasonerUnavailableError, match="requires a host"):
+        selection.resolve(executor, selection.MANAGE)
+
+    executor.manage = OperationExecutorConfig(
+        reasoner="host", host="muse-code", tool_mode=TOOL_MODE_NATIVE
+    )
+    with pytest.raises(ReasonerUnavailableError, match="supports only codex"):
         selection.resolve(executor, selection.MANAGE)
 
 
