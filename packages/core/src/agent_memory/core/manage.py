@@ -274,7 +274,7 @@ class Manage:
         proposal = self._open(proposal_id)
         self._require_sources(expected_sources)
         content = verdict or reasoning.Verdict(proposal_id, accept, text=text)
-        detail = self._apply(proposal, content) if accept else ""
+        detail = self._apply(proposal, content, expected_sources) if accept else ""
         return self._ledger().append(
             Decision(
                 proposal_id=proposal.id,
@@ -302,18 +302,26 @@ class Manage:
                 return proposal
         raise NotFoundError(f"no open proposal {proposal_id}")
 
-    def _apply(self, proposal: Proposal, verdict: reasoning.Verdict) -> str:
+    def _apply(
+        self,
+        proposal: Proposal,
+        verdict: reasoning.Verdict,
+        sources: tuple[reasoning.ReviewSource, ...] = (),
+    ) -> str:
+        expected = {source.name: source.source_hash for source in sources}
         if proposal.kind == PROPOSAL_MERGE:
-            return self._merge(proposal, verdict)
+            return self._merge(proposal, verdict, expected)
         if proposal.kind == PROPOSAL_SUPERSEDE:
-            return self._supersede(proposal)
+            return self._supersede(proposal, expected)
         if proposal.kind == PROPOSAL_SPLIT:
-            return self._split(proposal, verdict)
+            return self._split(proposal, verdict, expected)
         if proposal.kind == PROPOSAL_DELETE:
-            return self._delete(proposal)
-        return self._rewrite_abstract(proposal, verdict.text)
+            return self._delete(proposal, expected)
+        return self._rewrite_abstract(proposal, verdict.text, expected)
 
-    def _merge(self, proposal: Proposal, verdict: reasoning.Verdict) -> str:
+    def _merge(
+        self, proposal: Proposal, verdict: reasoning.Verdict, expected: dict[str, str]
+    ) -> str:
         """The reasoner writes the knowledge; the library computes time, identity, evidence."""
         if not verdict.abstract.strip() or not verdict.body.strip():
             raise ValidationError(
@@ -325,20 +333,31 @@ class Manage:
         if self._store.find(name) is not None:
             name += "-" + self._clock.stamp().lower()
         merged = self._store.merge(
-            [record.name for record in entries], verdict.abstract, verdict.body, name=name
+            [record.name for record in entries],
+            verdict.abstract,
+            verdict.body,
+            name=name,
+            expected_source_hashes=expected,
         )
         return f"merged into {merged.name}"
 
-    def _supersede(self, proposal: Proposal) -> str:
+    def _supersede(self, proposal: Proposal, expected: dict[str, str]) -> str:
         entries = [self._entry(name) for name in proposal.targets]
         keeper = max(entries, key=lambda record: (len(record.body), record.created, record.name))
         for record in entries:
             if record.name == keeper.name:
                 continue
-            self._store.supersede(record.name, keeper.name)
+            self._store.supersede(
+                record.name,
+                keeper.name,
+                expected_source_hash=expected.get(record.name),
+                expected_successor_hash=expected.get(keeper.name),
+            )
         return f"kept {keeper.name}"
 
-    def _split(self, proposal: Proposal, verdict: reasoning.Verdict) -> str:
+    def _split(
+        self, proposal: Proposal, verdict: reasoning.Verdict, expected: dict[str, str]
+    ) -> str:
         """The original keeps its name as the first part; every other part is a new file."""
         parts = [part for part in verdict.parts if part.abstract.strip() and part.body.strip()]
         if len(parts) < len(("first", "second")):
@@ -346,6 +365,7 @@ class Manage:
                 [FieldError("parts", "accepting a split needs at least two parts with content")]
             )
         original = self._entry(proposal.targets[0])
+        original.source_hash = expected.get(original.name, original.source_hash)
         own = set(original.provenance)
         now = self._clock.timestamp()
         names = []
@@ -374,16 +394,18 @@ class Manage:
             names.append(written.name)
         return "split into " + ", ".join(names)
 
-    def _delete(self, proposal: Proposal) -> str:
-        removed = self._store.delete(proposal.targets[0])
+    def _delete(self, proposal: Proposal, expected: dict[str, str]) -> str:
+        name = proposal.targets[0]
+        removed = self._store.delete(name, expected_source_hash=expected.get(name))
         return f"marked {removed.name} invalid"
 
-    def _rewrite_abstract(self, proposal: Proposal, text: str) -> str:
+    def _rewrite_abstract(self, proposal: Proposal, text: str, expected: dict[str, str]) -> str:
         if not text.strip():
             raise ValidationError(
                 [FieldError("text", "accepting an abstract review needs the replacement abstract")]
             )
         record = self._entry(proposal.targets[0])
+        record.source_hash = expected.get(record.name, record.source_hash)
         record.abstract = text.strip()
         self._rewrite(record)
         return f"rewrote the abstract of {record.name}"
