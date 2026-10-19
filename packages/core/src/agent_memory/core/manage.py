@@ -32,11 +32,11 @@ from .schema import SOURCE_MENU, source_of
 from .sessions import parse_pointer
 from .store import Store
 
-PROPOSAL_MERGE = "merge"
-PROPOSAL_SUPERSEDE = "supersede"
-PROPOSAL_SPLIT = "split"
-PROPOSAL_DELETE = "delete"
-PROPOSAL_ABSTRACT_REVIEW = "abstract-review"
+PROPOSAL_MERGE = reasoning.PROPOSAL_MERGE
+PROPOSAL_SUPERSEDE = reasoning.PROPOSAL_SUPERSEDE
+PROPOSAL_SPLIT = reasoning.PROPOSAL_SPLIT
+PROPOSAL_DELETE = reasoning.PROPOSAL_DELETE
+PROPOSAL_ABSTRACT_REVIEW = reasoning.PROPOSAL_ABSTRACT_REVIEW
 
 ACTION_DATE_NORMALISED = "date-normalised"
 ACTION_DUPLICATE_MERGED = "duplicate-merged"

@@ -38,6 +38,11 @@ FIELD_ABSTRACT = "abstract"
 FIELD_BODY = "body"
 FIELD_PARTS = "parts"
 FIELD_PROVENANCE = "provenance"
+PROPOSAL_MERGE = "merge"
+PROPOSAL_SUPERSEDE = "supersede"
+PROPOSAL_SPLIT = "split"
+PROPOSAL_DELETE = "delete"
+PROPOSAL_ABSTRACT_REVIEW = "abstract-review"
 
 
 class Reasoner(Protocol):
@@ -261,21 +266,52 @@ def parse(reply: str) -> list[Verdict]:
             continue
         if not isinstance(payload, dict):
             continue
-        proposal_id = payload.get(FIELD_PROPOSAL)
-        verdict = payload.get(FIELD_VERDICT)
-        if not isinstance(proposal_id, str) or verdict not in (VERDICT_ACCEPT, VERDICT_REJECT):
-            continue
-        verdicts.append(
-            Verdict(
-                proposal_id=proposal_id,
-                accept=verdict == VERDICT_ACCEPT,
-                text=_string(payload.get(FIELD_TEXT)),
-                abstract=_string(payload.get(FIELD_ABSTRACT)),
-                body=_string(payload.get(FIELD_BODY)),
-                parts=_parts(payload.get(FIELD_PARTS)),
-            )
-        )
+        verdict = verdict_from_payload(payload)
+        if verdict is not None:
+            verdicts.append(verdict)
     return verdicts
+
+
+def verdict_from_payload(payload: object) -> Verdict | None:
+    """Decode one typed verdict without granting it authority over a proposal."""
+    if not isinstance(payload, dict):
+        return None
+    proposal_id = payload.get(FIELD_PROPOSAL)
+    verdict = payload.get(FIELD_VERDICT)
+    if not isinstance(proposal_id, str) or verdict not in (VERDICT_ACCEPT, VERDICT_REJECT):
+        return None
+    return Verdict(
+        proposal_id=proposal_id,
+        accept=verdict == VERDICT_ACCEPT,
+        text=_string(payload.get(FIELD_TEXT)),
+        abstract=_string(payload.get(FIELD_ABSTRACT)),
+        body=_string(payload.get(FIELD_BODY)),
+        parts=_parts(payload.get(FIELD_PARTS)),
+    )
+
+
+def verdict_as_dict(verdict: Verdict) -> dict[str, object]:
+    return {
+        FIELD_PROPOSAL: verdict.proposal_id,
+        FIELD_VERDICT: VERDICT_ACCEPT if verdict.accept else VERDICT_REJECT,
+        **({FIELD_TEXT: verdict.text} if verdict.text else {}),
+        **({FIELD_ABSTRACT: verdict.abstract} if verdict.abstract else {}),
+        **({FIELD_BODY: verdict.body} if verdict.body else {}),
+        **(
+            {
+                FIELD_PARTS: [
+                    {
+                        FIELD_ABSTRACT: part.abstract,
+                        FIELD_BODY: part.body,
+                        FIELD_PROVENANCE: list(part.provenance),
+                    }
+                    for part in verdict.parts
+                ]
+            }
+            if verdict.parts
+            else {}
+        ),
+    }
 
 
 def _string(value: object) -> str:
