@@ -138,6 +138,7 @@ def test_mem_sleep_runs_native_codex_mcp_review_then_manage_validation(
     assert "--ignore-user-config" in trace["argv"]
     assert trace["argv"][trace["argv"].index("--sandbox") + 1] == "read-only"
     assert any("memory_review" in part for part in trace["argv"])
+    assert "analytics.enabled=false" in trace["argv"]
 
     reopened = Store(store.root, agent="assert")
     assert all(

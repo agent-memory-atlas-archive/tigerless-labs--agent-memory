@@ -119,6 +119,7 @@ class ToolServer:
     command: str
     args: tuple[str, ...]
     tools: tuple[str, ...]
+    host_analytics_enabled: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -284,6 +285,10 @@ class CodexDialect(Dialect):
             f"{prefix}.enabled_tools": list(server.tools),
             f"{prefix}.default_tools_approval_mode": CODEX_TOOL_APPROVAL,
         }
+        if not server.host_analytics_enabled:
+            # A bounded machine-consumed review has no use for delaying process shutdown on
+            # Codex's synchronous analytics flush. This does not alter the agent turn or MCP.
+            overrides["analytics.enabled"] = False
         command = [
             spec.binary,
             "exec",

@@ -121,6 +121,7 @@ class ToolHostReasoner(HostReasoner):
             server_name=MANAGE_TOOL_SERVER_NAME,
             module=MANAGE_SESSION_MODULE,
             timeout_seconds=toolkit.request.limits.timeout_seconds,
+            host_analytics_enabled=False,
         )
         usage = result.usage
         phases = result.phases
@@ -145,6 +146,7 @@ class ToolHostReasoner(HostReasoner):
         server_name: str,
         module: str,
         timeout_seconds: float | None = None,
+        host_analytics_enabled: bool = True,
     ) -> HostResult:
         with tempfile.TemporaryDirectory() as batch:
             directory = pathlib.Path(batch)
@@ -154,6 +156,7 @@ class ToolHostReasoner(HostReasoner):
                 command=sys.executable,
                 args=("-m", module, str(directory)),
                 tools=tuple(spec.name for spec in toolkit.catalogue()),
+                host_analytics_enabled=host_analytics_enabled,
             )
             result = self.host.converse(
                 material,

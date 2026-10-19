@@ -1,5 +1,6 @@
 """Host CLIs run Write tools-only: the toolkit over MCP, nothing of their own."""
 
+import dataclasses
 import json
 import tomllib
 
@@ -111,6 +112,19 @@ def test_codex_turns_off_local_execution(tmp_path):
     assert {"shell_tool", "unified_exec", "multi_agent", "plugins", "apps"} <= disabled
     assert "--add-dir" not in command
     assert SYSTEM not in " ".join(command)
+
+
+def test_codex_can_skip_shutdown_analytics_for_a_bounded_review(tmp_path):
+    server = dataclasses.replace(SERVER, host_analytics_enabled=False)
+    command = hosts.DIALECTS[hosts.HOST_CODEX].tool_command(
+        _spec(hosts.HOST_CODEX),
+        system_prompt=SYSTEM,
+        instructions_file=tmp_path / "instructions.md",
+        server=server,
+        answer_file=tmp_path / "answer.txt",
+    )
+
+    assert _overrides(command)["analytics"]["enabled"] is False
 
 
 def test_hermes_selects_only_the_isolated_write_server(tmp_path):

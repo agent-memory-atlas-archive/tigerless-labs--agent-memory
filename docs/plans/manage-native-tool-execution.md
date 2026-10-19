@@ -92,3 +92,21 @@ shape: measured MCP execution and Manage apply are not the bottleneck. Because e
 target was read exactly once and MCP time was negligible, the evidence did not license even a
 small speculative preload. The implementation therefore keeps the original ReAct loop, summary-
 first prompt, on-demand evidence reads, and permission boundary unchanged.
+
+### Codex shutdown tail
+
+A 2026-10-20 process-level trace replayed three representative Native Manage cases without
+shortening the Agent Turn. All three completed their evidence reads, submitted a complete verdict
+set, and wrote the full Ledger and Report. After the last MCP response, Codex spent 1.19-1.45
+seconds producing its final agent message; `turn.completed` followed 1-11 milliseconds later. The
+MCP service and its transport process were gone about 6 milliseconds after `turn.completed`.
+
+The remaining 5.49-7.04 seconds occurred inside the Codex process after MCP shutdown. Native
+process exit was followed by stdout/stderr EOF and the parent `wait()` within about 4-5
+milliseconds, excluding repeated waits and pipe-buffer backpressure. Codex 0.162.0 performs a
+synchronous analytics flush after its processor and MCP shutdown. A same-case diagnostic with
+only `analytics.enabled=false` reduced shutdown from 5.51 seconds to 0.041 seconds while
+preserving the complete turn and fail-closed result handling. Native Manage now disables that
+per-run host analytics flush; Native Write, ReAct behavior, MCP tools, and Store permissions are
+unchanged. Three production-path replays then completed merge, split, and delete reviews with
+shutdown times of 0.082, 0.056, and 0.044 seconds respectively.
