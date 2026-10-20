@@ -10,6 +10,7 @@ from agent_memory.core.manage import (
     PROPOSAL_MERGE,
     PROPOSAL_SUPERSEDE,
     Manage,
+    Proposal,
 )
 from agent_memory.core.manage_toolkit import (
     ARG_NAME,
@@ -19,7 +20,15 @@ from agent_memory.core.manage_toolkit import (
     TOOL_READ,
     TOOL_SUBMIT,
 )
-from agent_memory.core.reasoning import ReviewLimits, ReviewRuntime, parse, prepare, render
+from agent_memory.core.reasoning import (
+    ReviewLimits,
+    ReviewRuntime,
+    native_instructions,
+    native_material,
+    parse,
+    prepare,
+    render,
+)
 
 
 class Recorder:
@@ -288,10 +297,94 @@ def test_review_request_freezes_scoped_sources_and_their_hashes(seeded):
         proposal.id for proposal in proposals
     }
     assert all(source.source_hash for proposal in request.proposals for source in proposal.sources)
+    assert all(source.valid_from for source in request.sources)
+    assert all(source.memory_created_at for source in request.sources)
+    assert all(source.memory_updated_at for source in request.sources)
     assert {source.name for proposal in request.proposals for source in proposal.sources} <= {
         target for proposal in proposals for target in proposal.targets
     }
     assert render(request) == render(proposals, seeded.records())
+
+
+def test_text_and_native_expose_distinct_temporal_semantics_for_supersede(store, clock):
+    store.config.manage.merge_proposal_similarity = 0.5
+    old = store.record(
+        type="fact",
+        name="kappa-retention",
+        abstract="Kappa retention policy",
+        body="Kappa retention is 30 days.",
+        valid_from="2025-02-01",
+    )
+    clock.advance(hours=1)
+    current = store.record(
+        type="fact",
+        name="kappa-retention-current",
+        abstract="Kappa retention policy current details",
+        body="Kappa retention is 45 days.",
+        valid_from="2026-01-01",
+    )
+    clock.advance(hours=1)
+    current = store.correct(current.name, body=current.body)
+    proposal = next(
+        item
+        for item in Manage(store).proposals()
+        if item.kind == PROPOSAL_SUPERSEDE and set(item.targets) == {old.name, current.name}
+    )
+    request = prepare([proposal], store.records(), ReviewLimits(8, 24, 120.0, 8000, 32000))
+    sources = {source.name: source for source in request.sources}
+
+    assert sources[old.name].valid_from == "2025-02-01T00:00:00Z"
+    assert sources[old.name].memory_created_at == old.created
+    assert sources[current.name].valid_from == "2026-01-01T00:00:00Z"
+    assert sources[current.name].memory_created_at == current.created
+    assert sources[current.name].memory_updated_at == current.updated
+    assert current.updated != current.created
+
+    text = render(request)
+    native = json.loads(native_material(request))["proposals"][0]["sources"]
+    native_by_name = {source["name"]: source for source in native}
+    for name, source in sources.items():
+        assert f"valid_from: {source.valid_from}" in text
+        assert f"memory_created_at: {source.memory_created_at}" in text
+        assert f"memory_updated_at: {source.memory_updated_at}" in text
+        assert native_by_name[name]["valid_from"] == source.valid_from
+        assert native_by_name[name]["memory_created_at"] == source.memory_created_at
+        assert native_by_name[name]["memory_updated_at"] == source.memory_updated_at
+    assert "not original Session event times" in text
+    assert "do not show that the user confirmed" in text
+    assert "not original Session event times" in native_instructions()
+    assert "do not show that the user confirmed" in native_instructions()
+
+
+def test_missing_temporal_metadata_remains_unknown_in_both_review_modes(store):
+    record = store.record(
+        type="fact",
+        name="legacy-undated",
+        abstract="Legacy undated fact",
+        body="The migrated file has no trustworthy lifecycle timestamps.",
+    )
+    record.valid_from = None
+    record.created = ""
+    record.updated = ""
+    proposal = Proposal(
+        PROPOSAL_ABSTRACT_REVIEW,
+        (record.name,),
+        "abstract is too thin to recognise this memory by",
+    )
+    request = prepare([proposal], [record], ReviewLimits(8, 24, 120.0, 8000, 32000))
+    source = request.sources[0]
+
+    assert source.valid_from is None
+    assert source.memory_created_at is None
+    assert source.memory_updated_at is None
+    text = render(request)
+    assert "valid_from: unknown" in text
+    assert "memory_created_at: unknown" in text
+    assert "memory_updated_at: unknown" in text
+    native_source = json.loads(native_material(request))["proposals"][0]["sources"][0]
+    assert native_source["valid_from"] is None
+    assert native_source["memory_created_at"] is None
+    assert native_source["memory_updated_at"] is None
 
 
 def test_native_review_reads_evidence_submits_tools_and_reuses_manage_apply(seeded):

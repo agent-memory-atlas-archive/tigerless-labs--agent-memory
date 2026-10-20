@@ -176,11 +176,7 @@ class ManageReviewToolkit:
         next_offset = offset + len(chunk)
         payload = {
             "proposal": proposal_id,
-            "name": source.name,
-            "source_hash": source.source_hash,
-            "type": source.type,
-            "abstract": source.abstract,
-            "provenance": list(source.provenance),
+            **source.as_dict(),
             "body": chunk,
             "offset": offset,
             "next_offset": next_offset if next_offset < len(body) else None,
@@ -363,6 +359,9 @@ def _source(raw: dict[str, object]) -> reasoning.ReviewSource:
         abstract=str(raw.get("abstract") or ""),
         body=str(raw.get("body") or ""),
         provenance=tuple(str(value) for value in _list(raw.get("provenance"))),
+        valid_from=_optional_string(raw.get("valid_from")),
+        memory_created_at=_optional_string(raw.get("memory_created_at")),
+        memory_updated_at=_optional_string(raw.get("memory_updated_at")),
     )
 
 
@@ -380,6 +379,11 @@ def _dicts(value: object) -> list[dict]:
 
 def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _optional_string(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
 
 
 def _write_json(path: pathlib.Path, payload: dict[str, object]) -> None:

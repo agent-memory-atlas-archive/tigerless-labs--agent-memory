@@ -54,6 +54,11 @@ def test_list_is_compact_and_read_opens_only_named_evidence(store):
     assert not listed.is_error
     assert proposal.id in listed.text
     assert "The staging drain is 20 seconds" not in listed.text
+    listed_sources = {source["name"]: source for source in json.loads(listed.text)[0]["sources"]}
+    listed_source = listed_sources[proposal.targets[1]]
+    assert listed_source["valid_from"]
+    assert listed_source["memory_created_at"]
+    assert listed_source["memory_updated_at"]
 
     refused = kit.call(
         TOOL_READ,
@@ -67,7 +72,15 @@ def test_list_is_compact_and_read_opens_only_named_evidence(store):
     assert not read.is_error
     payload = json.loads(read.text)
     assert payload["source_hash"]
+    assert payload["source_hash"] == listed_source["source_hash"]
     assert "staging drain is 20 seconds" in payload["body"]
+    assert payload["valid_from"]
+    assert payload["memory_created_at"]
+    assert payload["memory_updated_at"]
+    listed_fields = {"valid_from", "memory_created_at", "memory_updated_at"}
+    assert {field: listed_source[field] for field in listed_fields} == {
+        field: payload[field] for field in listed_fields
+    }
     assert kit.evidence_reads == [(proposal.id, proposal.targets[1])]
 
 
@@ -157,3 +170,23 @@ def test_session_seed_and_record_round_trip(store, tmp_path):
     assert kit.outcome().complete
     assert kit.evidence_reads == [(proposal.id, proposal.targets[0])]
     assert [call.name for call in kit.calls] == [TOOL_READ, TOOL_SUBMIT]
+
+
+def test_an_older_seed_without_temporal_metadata_loads_unknown(store, tmp_path):
+    kit, _ = _kit(store)
+    directory = tmp_path / "legacy-review"
+    directory.mkdir()
+    kit.save_seed(directory)
+    path = directory / "seed.json"
+    seed = json.loads(path.read_text(encoding="utf-8"))
+    for source in seed["request"]["sources"]:
+        source.pop("valid_from")
+        source.pop("memory_created_at")
+        source.pop("memory_updated_at")
+    path.write_text(json.dumps(seed), encoding="utf-8")
+
+    loaded = ManageReviewToolkit.from_directory(directory)
+
+    assert all(source.valid_from is None for source in loaded.request.sources)
+    assert all(source.memory_created_at is None for source in loaded.request.sources)
+    assert all(source.memory_updated_at is None for source in loaded.request.sources)

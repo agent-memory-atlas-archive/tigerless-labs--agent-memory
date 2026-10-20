@@ -117,6 +117,22 @@ class ReviewSource:
     abstract: str
     body: str
     provenance: tuple[str, ...]
+    valid_from: str | None = None
+    memory_created_at: str | None = None
+    memory_updated_at: str | None = None
+
+    def as_dict(self, *, include_body: bool = False) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "source_hash": self.source_hash,
+            "type": self.type,
+            "abstract": self.abstract,
+            **({"body": self.body} if include_body else {}),
+            "provenance": list(self.provenance),
+            "valid_from": self.valid_from,
+            "memory_created_at": self.memory_created_at,
+            "memory_updated_at": self.memory_updated_at,
+        }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -137,17 +153,7 @@ class ReviewProposal:
             "targets": list(self.targets),
             "reason": self.reason,
             "evidence": self.evidence,
-            "sources": [
-                {
-                    "name": source.name,
-                    "source_hash": source.source_hash,
-                    "type": source.type,
-                    "abstract": source.abstract,
-                    **({"body": source.body} if include_body else {}),
-                    "provenance": list(source.provenance),
-                }
-                for source in self.sources
-            ],
+            "sources": [source.as_dict(include_body=include_body) for source in self.sources],
         }
 
 
@@ -287,7 +293,14 @@ def render(
         for proposal in review_proposals
     ]
     entries = [
-        f"### {source.name}\nabstract: {source.abstract}\n\n{source.body.strip()}"
+        (
+            f"### {source.name}\n"
+            f"abstract: {source.abstract}\n"
+            f"valid_from: {source.valid_from or 'unknown'}\n"
+            f"memory_created_at: {source.memory_created_at or 'unknown'}\n"
+            f"memory_updated_at: {source.memory_updated_at or 'unknown'}\n\n"
+            f"{source.body.strip()}"
+        )
         for source in review_sources
     ]
     return prompts.manage_review(
@@ -305,6 +318,9 @@ def _source(record: MemoryRecord) -> ReviewSource:
         abstract=record.abstract,
         body=record.body,
         provenance=tuple(record.provenance),
+        valid_from=record.valid_from or None,
+        memory_created_at=record.created or None,
+        memory_updated_at=record.updated or None,
     )
 
 
