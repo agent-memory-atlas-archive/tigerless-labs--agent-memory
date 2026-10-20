@@ -241,6 +241,11 @@ reasoner = "host"
 host = "codex"
 tool_mode = "text" # set "native" for the experimental bounded Codex reviewer
 timeout_seconds = 120
+
+[manage]
+# Experimental: let Native Manage inspect only raw Session pointers already cited by a target.
+# This sends those cited historical messages to the configured review model when it requests them.
+review_raw_session_evidence = false
 ```
 
 For `mem distill` and `mem sleep`, `--reason`, `--reason-host`, and `--reason-model` override the
@@ -280,6 +285,14 @@ remaining model/runtime wait; verdict application is timed separately inside Man
 latency diagnostics, not model-provider server timings. `manage.review_max_tool_calls`,
 `manage.review_tool_result_chars`, and
 `manage.review_evidence_chars` bound tool use; the executor timeout remains the hard process bound.
+Raw Session inspection is a separate experimental permission and remains off even when Manage
+uses `tool_mode = "native"`. Setting `manage.review_raw_session_evidence = true` lets
+`read_evidence` open only a complete Session pointer frozen on that proposal's target Memory. It
+does not permit Session search, neighboring messages, unrelated Memories, Recall, or mutation.
+Returned role and message time are archived metadata, not proof that a fact is true, confirmed, or
+effective at that time. The Memory Source Hash covers the provenance pointer but not the referenced
+Session file bytes, so this boundary does not defend against out-of-band malicious modification of
+historical files on the Store filesystem.
 
 Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
 usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's

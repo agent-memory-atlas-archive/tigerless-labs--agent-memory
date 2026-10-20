@@ -243,6 +243,7 @@ class Manage:
             timeout_seconds=executor.manage.timeout_seconds or executor.timeout_seconds,
             tool_result_chars=manage.review_tool_result_chars,
             evidence_chars=manage.review_evidence_chars,
+            raw_session_evidence=manage.review_raw_session_evidence,
         )
 
     def _caps(self) -> dict[str, int]:
@@ -790,6 +791,13 @@ class Manage:
                         (f"{proposal}/{name}" for proposal, name in report.review.evidence_reads),
                     ),
                     _report_values(
+                        "provenance_reads",
+                        (
+                            f"{proposal}/{name}/{pointer}"
+                            for proposal, name, pointer in report.review.provenance_reads
+                        ),
+                    ),
+                    _report_values(
                         "tool_trace",
                         (
                             f"{name}{'!error' if failed else ''}"
@@ -878,6 +886,7 @@ def _review_dict(outcome: reasoning.ReviewOutcome | None) -> dict[str, object] |
         "cached_input_tokens": outcome.cached_input_tokens,
         "output_tokens": outcome.output_tokens,
         "evidence_reads": [list(item) for item in outcome.evidence_reads],
+        "provenance_reads": [list(item) for item in outcome.provenance_reads],
         "tool_trace": [
             {"name": name, "is_error": is_error} for name, is_error in outcome.tool_trace
         ],

@@ -166,6 +166,7 @@ class ReviewLimits:
     timeout_seconds: float
     tool_result_chars: int
     evidence_chars: int
+    raw_session_evidence: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -199,6 +200,7 @@ class ReviewOutcome:
     cached_input_tokens: int | None = None
     output_tokens: int | None = None
     evidence_reads: tuple[tuple[str, str], ...] = ()
+    provenance_reads: tuple[tuple[str, str, str], ...] = ()
     tool_trace: tuple[tuple[str, bool], ...] = ()
     error: str = ""
 
@@ -268,7 +270,13 @@ def native_instructions() -> str:
 def native_material(request: ReviewRequest) -> str:
     """Send proposal summaries first; bodies remain behind scoped, observable reads."""
     proposals = [proposal.as_dict() for proposal in request.proposals]
-    return json.dumps({"proposals": proposals}, sort_keys=True)
+    return json.dumps(
+        {
+            "proposals": proposals,
+            "raw_session_evidence": request.limits.raw_session_evidence,
+        },
+        sort_keys=True,
+    )
 
 
 def render(
@@ -295,6 +303,7 @@ def render(
     entries = [
         (
             f"### {source.name}\n"
+            f"type: {source.type}\n"
             f"abstract: {source.abstract}\n"
             f"valid_from: {source.valid_from or 'unknown'}\n"
             f"memory_created_at: {source.memory_created_at or 'unknown'}\n"
