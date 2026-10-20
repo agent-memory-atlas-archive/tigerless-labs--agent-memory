@@ -356,6 +356,8 @@ def test_text_and_native_expose_distinct_temporal_semantics_for_supersede(store,
     assert "do not show that the user confirmed" in text
     assert "not original Session event times" in native_instructions()
     assert "do not show that the user confirmed" in native_instructions()
+    assert "source role, confirmation status" in native_instructions()
+    assert "do not open raw sources indiscriminately" in native_instructions()
     assert json.loads(native_material(request))["raw_session_evidence"] is False
 
 
