@@ -11,14 +11,17 @@ host's built-in tools, user configuration, rules and native memory are off. Clau
 replace their system instructions; Hermes and Muse put the same ordered material in one prompt file.
 Claude's bare mode stays unused because it drops OAuth and would break zero-key install.
 
-Manage native review reuses the same one-process Codex transport, not the Write toolkit or Write
-loop. It is opt-in under `[executor.manage]` and exposes one separately named per-run MCP server
-with only proposal listing, proposal-scoped evidence reads, and structured verdict submission.
-Codex runs ephemeral with user config, rules, built-in tools, personal memory, and filesystem
-writes disabled. The MCP adapter persists the tool trace across the process boundary; it never
-applies a verdict. Manage rechecks source versions, proposal membership, per-kind caps, and Store
-rules before the existing decision path writes anything. Endpoint and non-Codex Manage reasoners
-retain the text protocol.
+Manage native review reuses the same one-process Host transport, not the Write toolkit or a
+library-side ReAct loop. It is opt-in under `[executor.manage]` for `codex` and `muse-code` and
+exposes one separately named per-run MCP server with only proposal listing, proposal-scoped
+evidence reads, and structured verdict submission. Codex runs ephemeral with user config, rules,
+built-in tools, personal memory, and filesystem writes disabled. Muse reuses its isolated
+HOME/XDG profile, staged authentication and routing, exact `run.toolset` selection, eight-step
+bound, disabled shell/web/write capabilities, and scoped OpenRouter namespace bridge. Neither
+Host receives a Store mutation tool. The MCP adapter persists the tool trace across the process
+boundary; it never applies a verdict. Manage rechecks source versions, proposal membership,
+per-kind caps, and Store rules before the existing decision path writes anything. Endpoint and
+other Host Manage reasoners retain the text protocol.
 
 Muse native Write is the automatic Write posture. Muse 1.4.4 added exact MCP selection through
 `run.toolset`; native mode supplies that selection as a one-run override and stages one required
@@ -27,8 +30,9 @@ the same attempted process rather than silently changing transport. An explicit
 `tool_mode = "text"` retains the compatibility protocol. Muse/OpenRouter namespace calls pass
 through a per-run loopback compatibility bridge before the existing pproxy: it flattens only the
 model request's tool schema, passes authentication through, and leaves Agent execution and MCP
-dispatch with Muse. A run is limited to eight model steps and fails closed without an accepted
-submission.
+dispatch with Muse. A Muse native run is limited to eight model steps and fails closed without an
+accepted submission. Muse Code 1.4.4 is the minimum for both native Write and native Manage because
+both depend on the same exact MCP selection flag.
 
 Hermes native Write uses a fresh profile below the active Hermes data root per batch and a
 collision-free dynamic MCP toolset named `agent-memory-write`. Its staged config contains only that stdio server and

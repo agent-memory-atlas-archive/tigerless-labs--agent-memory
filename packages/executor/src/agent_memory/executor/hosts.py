@@ -78,7 +78,7 @@ CODEX_DISABLED_FEATURES = (
     "goals",
 )
 MUSE_TOOLSET_SETTING = "run.toolset"
-MUSE_NATIVE_WRITE_REQUIREMENT = "Muse native Write tools require Muse Code 1.4.4 or newer"
+MUSE_NATIVE_TOOL_REQUIREMENT = "Muse native tools require Muse Code 1.4.4 or newer"
 MUSE_RUNTIME_TMPDIR = "/var/tmp"
 MUSE_NATIVE_MAX_MODEL_STEPS = 8
 
@@ -622,7 +622,7 @@ class Host:
         for number in range(self.spec.attempts):
             last = attempt()
             if last.ok or last.error in (
-                MUSE_NATIVE_WRITE_REQUIREMENT,
+                MUSE_NATIVE_TOOL_REQUIREMENT,
                 HERMES_NATIVE_WRITE_REQUIREMENT,
             ):
                 return last
@@ -969,7 +969,7 @@ class Host:
                 and MUSE_TOOLSET_SETTING in " ".join(command)
                 and ("unexpected argument '-c'" in detail or "unknown option" in detail)
             ):
-                detail = MUSE_NATIVE_WRITE_REQUIREMENT
+                detail = MUSE_NATIVE_TOOL_REQUIREMENT
             return HostResult("", False, elapsed, detail or "non-zero exit with no output")
         text = self.dialect.answer(completed.stdout, answer_file)
         if require_answer and self.spec.name in (HOST_CODEX, HOST_MUSE_CODE) and not text:

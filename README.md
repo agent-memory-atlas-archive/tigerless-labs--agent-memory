@@ -238,8 +238,8 @@ tool_mode = "auto" # supported Hosts use native tools; use "text" for compatibil
 
 [executor.manage]
 reasoner = "host"
-host = "codex"
-tool_mode = "text" # set "native" for the experimental bounded Codex reviewer
+host = "muse-code" # native Manage currently supports "muse-code" and "codex"
+tool_mode = "text" # set "native" for the experimental bounded Host reviewer
 timeout_seconds = 120
 
 [manage]

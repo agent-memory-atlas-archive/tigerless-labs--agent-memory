@@ -19,7 +19,7 @@ WRITE = "write"
 MANAGE = "manage"
 OPERATIONS = (WRITE, MANAGE)
 SOURCE = "source"
-NATIVE_MANAGE_HOST = "codex"
+NATIVE_MANAGE_HOSTS = ("codex", "muse-code")
 
 
 def resolve(
@@ -95,8 +95,8 @@ def resolve(
             raise ReasonerUnavailableError(
                 "native Manage review currently requires a host reasoner"
             )
-        if chosen.host != NATIVE_MANAGE_HOST:
+        if chosen.host not in NATIVE_MANAGE_HOSTS:
             raise ReasonerUnavailableError(
-                f"native Manage review currently supports only {NATIVE_MANAGE_HOST}"
+                "native Manage review currently supports only " + ", ".join(NATIVE_MANAGE_HOSTS)
             )
     return chosen
