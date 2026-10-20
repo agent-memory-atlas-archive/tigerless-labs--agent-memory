@@ -30,6 +30,7 @@ def test_defaults_are_complete_and_self_consistent():
     assert config.manage.review_max_tool_calls >= config.manage.review_max_steps
     assert config.manage.review_tool_result_chars > 0
     assert config.manage.review_evidence_chars >= config.manage.review_tool_result_chars
+    assert config.manage.review_raw_session_evidence is False
     assert config.recall.default_limit > 0
     assert config.recall.recency_half_life_days > 0
     assert config.storage.max_depth >= len(("type", "file"))
@@ -68,6 +69,7 @@ def test_config_round_trips_through_disk(tmp_path):
     original.executor.write.tool_mode = TOOL_MODE_NATIVE
     original.executor.manage.reasoner = "endpoint"
     original.executor.manage.project = "user-project"
+    original.manage.review_raw_session_evidence = True
     original.save(tmp_path)
 
     assert (tmp_path / CONFIG_FILENAME).exists()
@@ -82,6 +84,7 @@ def test_config_round_trips_through_disk(tmp_path):
     assert reloaded.executor.write.tool_mode == TOOL_MODE_NATIVE
     assert reloaded.executor.manage.reasoner == "endpoint"
     assert reloaded.executor.manage.project == "user-project"
+    assert reloaded.manage.review_raw_session_evidence is True
 
 
 def test_legacy_flat_executor_config_remains_valid(tmp_path):
@@ -167,6 +170,14 @@ def test_invalid_vector_configuration_is_rejected(tmp_path, value, error):
     knob = "vector_enabled" if "enabled" in error else "vector_model"
     (tmp_path / CONFIG_FILENAME).write_text(f"[index]\n{knob} = {value}\n", encoding="utf-8")
     with pytest.raises(ValueError, match=error):
+        Config.load(tmp_path)
+
+
+def test_non_boolean_raw_session_review_permission_is_rejected(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text(
+        '[manage]\nreview_raw_session_evidence = "true"\n', encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="manage.review_raw_session_evidence"):
         Config.load(tmp_path)
 
 

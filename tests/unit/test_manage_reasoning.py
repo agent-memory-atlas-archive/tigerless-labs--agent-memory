@@ -300,6 +300,7 @@ def test_review_request_freezes_scoped_sources_and_their_hashes(seeded):
     assert all(source.valid_from for source in request.sources)
     assert all(source.memory_created_at for source in request.sources)
     assert all(source.memory_updated_at for source in request.sources)
+    assert request.limits.raw_session_evidence is False
     assert {source.name for proposal in request.proposals for source in proposal.sources} <= {
         target for proposal in proposals for target in proposal.targets
     }
@@ -345,6 +346,7 @@ def test_text_and_native_expose_distinct_temporal_semantics_for_supersede(store,
     native_by_name = {source["name"]: source for source in native}
     for name, source in sources.items():
         assert f"valid_from: {source.valid_from}" in text
+        assert f"type: {source.type}" in text
         assert f"memory_created_at: {source.memory_created_at}" in text
         assert f"memory_updated_at: {source.memory_updated_at}" in text
         assert native_by_name[name]["valid_from"] == source.valid_from
@@ -354,6 +356,7 @@ def test_text_and_native_expose_distinct_temporal_semantics_for_supersede(store,
     assert "do not show that the user confirmed" in text
     assert "not original Session event times" in native_instructions()
     assert "do not show that the user confirmed" in native_instructions()
+    assert json.loads(native_material(request))["raw_session_evidence"] is False
 
 
 def test_missing_temporal_metadata_remains_unknown_in_both_review_modes(store):

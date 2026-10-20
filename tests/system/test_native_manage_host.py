@@ -134,6 +134,7 @@ def test_mem_sleep_runs_native_codex_mcp_review_then_manage_validation(
     assert all(call["result"]["isError"] is False for call in trace["calls"])
     assert "submit_verdicts" in trace["system"]
     assert "The staging drain is 20 seconds" not in trace["prompt"]
+    assert '"raw_session_evidence": false' in trace["prompt"]
     assert trace["executor"] == "1"
     assert "--ignore-user-config" in trace["argv"]
     assert trace["argv"][trace["argv"].index("--sandbox") + 1] == "read-only"
