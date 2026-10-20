@@ -154,19 +154,20 @@ def test_write_tool_mode_is_operation_scoped_and_muse_native_can_be_explicit():
     assert not isinstance(distiller.distiller(manage_config), ToolReasoner)
 
 
-def test_manage_native_mode_is_explicit_and_currently_codex_only():
+def test_manage_native_mode_is_explicit_and_requires_a_supported_host():
     executor = Config.default().executor
     executor.manage = OperationExecutorConfig(tool_mode=TOOL_MODE_NATIVE)
 
-    with pytest.raises(ReasonerUnavailableError, match="supports only codex"):
+    with pytest.raises(ReasonerUnavailableError, match="supports only codex, muse-code"):
         selection.resolve(executor, selection.MANAGE)
 
-    executor.manage = OperationExecutorConfig(
-        reasoner="host", host="codex", tool_mode=TOOL_MODE_NATIVE
-    )
-    configured = selection.resolve(executor, selection.MANAGE)
-    assert configured.tool_mode == TOOL_MODE_NATIVE
-    assert isinstance(distiller.distiller(configured), ToolReasoner)
+    for host in ("codex", "muse-code"):
+        executor.manage = OperationExecutorConfig(
+            reasoner="host", host=host, tool_mode=TOOL_MODE_NATIVE
+        )
+        configured = selection.resolve(executor, selection.MANAGE)
+        assert configured.tool_mode == TOOL_MODE_NATIVE
+        assert isinstance(distiller.distiller(configured), ToolReasoner)
 
 
 def test_manage_native_mode_rejects_endpoint_and_unverified_hosts():
@@ -176,9 +177,9 @@ def test_manage_native_mode_rejects_endpoint_and_unverified_hosts():
         selection.resolve(executor, selection.MANAGE)
 
     executor.manage = OperationExecutorConfig(
-        reasoner="host", host="muse-code", tool_mode=TOOL_MODE_NATIVE
+        reasoner="host", host="hermes", tool_mode=TOOL_MODE_NATIVE
     )
-    with pytest.raises(ReasonerUnavailableError, match="supports only codex"):
+    with pytest.raises(ReasonerUnavailableError, match="supports only codex, muse-code"):
         selection.resolve(executor, selection.MANAGE)
 
 
