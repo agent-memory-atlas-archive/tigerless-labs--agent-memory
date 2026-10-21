@@ -46,8 +46,11 @@ MEM_TOOL_PATTERN = "Bash(mem:*)"
 CLAUDE_NATIVE_TOOLS = "Write,Edit,NotebookEdit,WebSearch,WebFetch,Task"
 HERMES_TOOLSETS = "terminal"
 HERMES_WRITE_SERVER_NAME = "agent-memory-write"
+HERMES_MANAGE_SERVER_NAME = "agent-memory-manage"
 HERMES_NATIVE_MAX_TURNS = 8
-HERMES_NATIVE_WRITE_REQUIREMENT = "Hermes native Write tools require Hermes Agent 0.22.2 or newer"
+HERMES_NATIVE_TOOL_REQUIREMENT = "Hermes native tools require Hermes Agent 0.22.2 or newer"
+# Kept for callers that imported the Write-specific name before Manage reused the same runtime.
+HERMES_NATIVE_WRITE_REQUIREMENT = HERMES_NATIVE_TOOL_REQUIREMENT
 HERMES_DATA_TRAINING_REQUIREMENT = (
     "Hermes contributor models require host_allow_data_training = true"
 )
@@ -363,6 +366,7 @@ class HermesDialect(Dialect):
     tools_by_default = True
 
     def tool_command(self, spec, *, system_prompt, instructions_file, server, answer_file):
+        toolset = self.toolset(server)
         command = [
             spec.binary,
             "chat",
@@ -372,7 +376,7 @@ class HermesDialect(Dialect):
             "--model",
             self.routed_model(spec),
             "--toolsets",
-            HERMES_WRITE_SERVER_NAME,
+            toolset,
             "--max-turns",
             str(HERMES_NATIVE_MAX_TURNS),
             "--ignore-rules",
@@ -380,6 +384,15 @@ class HermesDialect(Dialect):
         if spec.provider:
             command += ["--provider", spec.provider]
         return command
+
+    @staticmethod
+    def toolset(server: ToolServer) -> str:
+        """Give Write and Manage distinct names without exposing arbitrary profile servers."""
+        if server.name == "memory":
+            return HERMES_WRITE_SERVER_NAME
+        if server.name == "memory_review":
+            return HERMES_MANAGE_SERVER_NAME
+        return server.name
 
     def command(
         self,
@@ -623,7 +636,7 @@ class Host:
             last = attempt()
             if last.ok or last.error in (
                 MUSE_NATIVE_TOOL_REQUIREMENT,
-                HERMES_NATIVE_WRITE_REQUIREMENT,
+                HERMES_NATIVE_TOOL_REQUIREMENT,
             ):
                 return last
             if number + 1 < self.spec.attempts:
@@ -712,8 +725,9 @@ class Host:
         home = pathlib.Path(tempfile.mkdtemp(prefix="agent-memory-", dir=profiles))
         configured: dict[str, object] = {}
         if server is not None:
+            toolset = HermesDialect.toolset(server)
             configured["mcp_servers"] = {
-                HERMES_WRITE_SERVER_NAME: {
+                toolset: {
                     "command": server.command,
                     "args": list(server.args),
                     "enabled": True,
@@ -956,14 +970,14 @@ class Host:
             detail = (completed.stderr.strip() or completed.stdout.strip())[:ERROR_EXCERPT]
             if (
                 self.spec.name == HOST_HERMES
-                and HERMES_WRITE_SERVER_NAME in " ".join(command)
+                and "--toolsets" in command
                 and (
                     "unrecognized arguments" in detail
                     or "unknown option" in detail
                     or "invalid choice" in detail
                 )
             ):
-                detail = HERMES_NATIVE_WRITE_REQUIREMENT
+                detail = HERMES_NATIVE_TOOL_REQUIREMENT
             if (
                 self.spec.name == HOST_MUSE_CODE
                 and MUSE_TOOLSET_SETTING in " ".join(command)

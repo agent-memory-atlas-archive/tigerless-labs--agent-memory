@@ -19,7 +19,7 @@ WRITE = "write"
 MANAGE = "manage"
 OPERATIONS = (WRITE, MANAGE)
 SOURCE = "source"
-NATIVE_MANAGE_HOSTS = ("codex", "muse-code")
+NATIVE_MANAGE_HOSTS = ("codex", "hermes", "muse-code")
 
 
 def resolve(
