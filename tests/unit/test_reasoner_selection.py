@@ -158,10 +158,10 @@ def test_manage_native_mode_is_explicit_and_requires_a_supported_host():
     executor = Config.default().executor
     executor.manage = OperationExecutorConfig(tool_mode=TOOL_MODE_NATIVE)
 
-    with pytest.raises(ReasonerUnavailableError, match="supports only codex, muse-code"):
+    with pytest.raises(ReasonerUnavailableError, match="supports only codex, hermes, muse-code"):
         selection.resolve(executor, selection.MANAGE)
 
-    for host in ("codex", "muse-code"):
+    for host in ("codex", "hermes", "muse-code"):
         executor.manage = OperationExecutorConfig(
             reasoner="host", host=host, tool_mode=TOOL_MODE_NATIVE
         )
@@ -177,10 +177,29 @@ def test_manage_native_mode_rejects_endpoint_and_unverified_hosts():
         selection.resolve(executor, selection.MANAGE)
 
     executor.manage = OperationExecutorConfig(
-        reasoner="host", host="hermes", tool_mode=TOOL_MODE_NATIVE
+        reasoner="host", host="claude-code", tool_mode=TOOL_MODE_NATIVE
     )
-    with pytest.raises(ReasonerUnavailableError, match="supports only codex, muse-code"):
+    with pytest.raises(ReasonerUnavailableError, match="supports only codex, hermes, muse-code"):
         selection.resolve(executor, selection.MANAGE)
+
+
+def test_hermes_manage_contributor_model_requires_operation_scoped_consent():
+    executor = Config.default().executor
+    executor.manage = OperationExecutorConfig(
+        reasoner="host",
+        host="hermes",
+        host_provider="openrouter",
+        host_model="meta/muse-spark-1.3-contributor",
+        tool_mode=TOOL_MODE_NATIVE,
+    )
+
+    configured = selection.resolve(executor, selection.MANAGE)
+    with pytest.raises(ReasonerUnavailableError, match="host_allow_data_training = true"):
+        distiller.distiller(configured)
+
+    executor.manage.host_allow_data_training = True
+    configured = selection.resolve(executor, selection.MANAGE)
+    assert isinstance(distiller.distiller(configured), ToolReasoner)
 
 
 def test_endpoint_write_does_not_silently_ignore_a_host_tool_mode():

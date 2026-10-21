@@ -141,6 +141,25 @@ def test_hermes_selects_only_the_isolated_write_server(tmp_path):
     assert SYSTEM not in " ".join(command)
 
 
+def test_hermes_selects_a_distinct_manage_server(tmp_path):
+    server = dataclasses.replace(
+        SERVER,
+        name="memory_review",
+        args=("-m", "agent_memory.mcp.manage_session", "/tmp/review"),
+        tools=("list_proposals", "read_evidence", "submit_verdicts"),
+    )
+    command = hosts.DIALECTS[hosts.HOST_HERMES].tool_command(
+        _spec(hosts.HOST_HERMES),
+        system_prompt=SYSTEM,
+        instructions_file=tmp_path / "instructions.md",
+        server=server,
+        answer_file=tmp_path / "answer.txt",
+    )
+
+    assert _after(command, "--toolsets") == hosts.HERMES_MANAGE_SERVER_NAME
+    assert "terminal" not in command
+
+
 def test_hermes_openrouter_keeps_the_publisher_qualified_model(tmp_path):
     spec = hosts.HostSpec(
         name=hosts.HOST_HERMES,
@@ -165,8 +184,7 @@ def test_muse_turns_off_unrelated_tools_and_keeps_the_sandbox(tmp_path):
 
     assert command[1] == "exec"
     assert _after(command, "-c") == (
-        'run.toolset=["mcp__memory__recall", "mcp__memory__read", '
-        '"mcp__memory__submit_operations"]'
+        'run.toolset=["mcp__memory__recall", "mcp__memory__read", "mcp__memory__submit_operations"]'
     )
     assert {
         "--no-foreign-personal-context",
