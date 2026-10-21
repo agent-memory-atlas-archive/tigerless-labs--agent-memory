@@ -1,5 +1,6 @@
 """Host CLIs run Write tools-only: the toolkit over MCP, nothing of their own."""
 
+import dataclasses
 import json
 import tomllib
 
@@ -113,6 +114,19 @@ def test_codex_turns_off_local_execution(tmp_path):
     assert SYSTEM not in " ".join(command)
 
 
+def test_codex_can_skip_shutdown_analytics_for_a_bounded_review(tmp_path):
+    server = dataclasses.replace(SERVER, host_analytics_enabled=False)
+    command = hosts.DIALECTS[hosts.HOST_CODEX].tool_command(
+        _spec(hosts.HOST_CODEX),
+        system_prompt=SYSTEM,
+        instructions_file=tmp_path / "instructions.md",
+        server=server,
+        answer_file=tmp_path / "answer.txt",
+    )
+
+    assert _overrides(command)["analytics"]["enabled"] is False
+
+
 def test_hermes_selects_only_the_isolated_write_server(tmp_path):
     command = _command(hosts.HOST_HERMES, tmp_path)
 
@@ -125,6 +139,25 @@ def test_hermes_selects_only_the_isolated_write_server(tmp_path):
     assert "--safe-mode" not in command
     assert "terminal" not in command
     assert SYSTEM not in " ".join(command)
+
+
+def test_hermes_selects_a_distinct_manage_server(tmp_path):
+    server = dataclasses.replace(
+        SERVER,
+        name="memory_review",
+        args=("-m", "agent_memory.mcp.manage_session", "/tmp/review"),
+        tools=("list_proposals", "read_evidence", "submit_verdicts"),
+    )
+    command = hosts.DIALECTS[hosts.HOST_HERMES].tool_command(
+        _spec(hosts.HOST_HERMES),
+        system_prompt=SYSTEM,
+        instructions_file=tmp_path / "instructions.md",
+        server=server,
+        answer_file=tmp_path / "answer.txt",
+    )
+
+    assert _after(command, "--toolsets") == hosts.HERMES_MANAGE_SERVER_NAME
+    assert "terminal" not in command
 
 
 def test_hermes_openrouter_keeps_the_publisher_qualified_model(tmp_path):
@@ -151,8 +184,7 @@ def test_muse_turns_off_unrelated_tools_and_keeps_the_sandbox(tmp_path):
 
     assert command[1] == "exec"
     assert _after(command, "-c") == (
-        'run.toolset=["mcp__memory__recall", "mcp__memory__read", '
-        '"mcp__memory__submit_operations"]'
+        'run.toolset=["mcp__memory__recall", "mcp__memory__read", "mcp__memory__submit_operations"]'
     )
     assert {
         "--no-foreign-personal-context",
