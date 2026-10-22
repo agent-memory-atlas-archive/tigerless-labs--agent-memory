@@ -29,3 +29,5 @@ The target Memory Source Hash includes its provenance pointer and is checked bef
 trace. It does not hash the referenced Session bytes. The append-only Store API preserves cited
 message indices during normal operation, but this mechanism does not claim to detect or defend
 against malicious out-of-band edits to archived Session files.
+
+Structured host messages preserve their original leading indentation and trailing whitespace in raw storage. Code excerpts and quoted text remain faithful evidence while projections retain their own formatting rules.
