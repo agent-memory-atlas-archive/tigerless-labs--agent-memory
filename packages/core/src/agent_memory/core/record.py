@@ -130,12 +130,12 @@ def validate(record: MemoryRecord, config: Config, schema: MemorySchema | None =
         errors.append(FieldError("abstract", "exceeds abstract_max_chars"))
     if "\n" in record.abstract:
         errors.append(FieldError("abstract", "must be a single line"))
-    for key, value in record.fields.items():
+    for key, custom_value in record.fields.items():
         # Custom fields ride the same line-based frontmatter dialect as the
         # core fields: an embedded line break is silently truncated to the
         # first line on the next read (splitlines() drops the rest), so
         # reject it here just as loudly as for abstract.
-        if "\n" in str(value) or "\r" in str(value):
+        if "\n" in str(custom_value) or "\r" in str(custom_value):
             errors.append(FieldError(key, "must be a single line"))
     if record.type and not slug.is_valid_slug(record.type):
         errors.append(FieldError("type", "must be a kebab-case slug"))
