@@ -94,3 +94,5 @@ preflight. Results are not attributable until native memory is isolated and the 
 passes that preflight.
 
 Failed regrading marks the saved run failed and retains the grader error instead of publishing a valid-looking incorrect score. Existing transport-success vote interpretation is preserved.
+
+Benchmark fingerprints include complete episode content, reference answers and evidence, preserving resume and attribution guards when a dataset changes without changing its identifiers.
