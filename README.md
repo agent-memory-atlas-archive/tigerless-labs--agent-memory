@@ -238,7 +238,14 @@ tool_mode = "auto" # supported Hosts use native tools; use "text" for compatibil
 
 [executor.manage]
 reasoner = "host"
-host = "codex"
+host = "muse-code" # native Manage supports "codex", "hermes", and "muse-code"
+tool_mode = "text" # set "native" for the experimental bounded Host reviewer
+timeout_seconds = 120
+
+[manage]
+# Experimental: let Native Manage inspect only raw Session pointers already cited by a target.
+# This sends those cited historical messages to the configured review model when it requests them.
+review_raw_session_evidence = false
 ```
 
 For `mem distill` and `mem sleep`, `--reason`, `--reason-host`, and `--reason-model` override the
@@ -261,9 +268,31 @@ adapter expands Responses API namespace tools to Muse's canonical MCP ids; it ne
 tools nor holds credentials. Hermes uses a temporary profile, an exact dynamic MCP toolset,
 and a provider selected independently of the model; OpenRouter therefore needs no Vertex project
 or gcloud authentication. `tool_mode = "text"` forces the compatibility protocol for a Host. A run that ends
-without an accepted submission writes nothing and leaves the backlog for retry. `tool_mode`
-applies only to Write Host reasoners; endpoint Write remains native function calling and Manage
-review remains the bounded text-verdict path.
+without an accepted submission writes nothing and leaves the backlog for retry.
+
+Manage keeps the text-verdict path by default. An explicit
+`[executor.manage] tool_mode = "native"` selects the experimental Codex, Hermes, or Muse reviewer.
+It starts one isolated Host process with only `list_proposals`, `read_evidence`, and
+`submit_verdicts`; proposal summaries arrive first and bodies are opened on demand. These tools
+cannot record, correct, supersede, merge, delete, or access arbitrary paths. A complete structured
+submission returns to the existing Manage cap, open-proposal, source-hash, `decide()`, Store,
+Ledger, and Dream Report path. Missing or stale submissions fail the run without a success report
+or transport fallback. Endpoint Manage and Claude Code remain on text mode. Review tool calls,
+evidence reads, wall time, and Host token/cache totals (when its output supplies them) are
+recorded in the report. For Codex JSONL runs, wall time is also divided into startup (launch to
+the first lifecycle event), MCP call intervals, shutdown (completed turn to exit), and the
+remaining model/runtime wait; verdict application is timed separately inside Manage. These are
+latency diagnostics, not model-provider server timings. `manage.review_max_tool_calls`,
+`manage.review_tool_result_chars`, and
+`manage.review_evidence_chars` bound tool use; the executor timeout remains the hard process bound.
+Raw Session inspection is a separate experimental permission and remains off even when Manage
+uses `tool_mode = "native"`. Setting `manage.review_raw_session_evidence = true` lets
+`read_evidence` open only a complete Session pointer frozen on that proposal's target Memory. It
+does not permit Session search, neighboring messages, unrelated Memories, Recall, or mutation.
+Returned role and message time are archived metadata, not proof that a fact is true, confirmed, or
+effective at that time. The Memory Source Hash covers the provenance pointer but not the referenced
+Session file bytes, so this boundary does not defend against out-of-band malicious modification of
+historical files on the Store filesystem.
 
 Either operation can select its own model endpoint by setting `reasoner = "endpoint"` and the
 usual `model`, `endpoint`, `project`, `location`, or `timeout_seconds` values in that operation's
@@ -350,7 +379,7 @@ committed to the repository.
 
 ### Hermes Agent
 
-Hermes native Write requires Hermes Agent 0.22.2 or newer. Hermes may still use Gemini/Vertex,
+Hermes native Write and Manage require Hermes Agent 0.22.2 or newer. Hermes may still use Gemini/Vertex,
 but it is not coupled to it. To run Hermes through OpenRouter without gcloud, export the key and
 pin the provider and model in the Write policy:
 
@@ -368,7 +397,8 @@ host_allow_data_training = true # required explicit consent for contributor-tier
 tool_mode = "auto"
 ```
 
-Each batch gets a fresh Hermes profile containing only an `agent-memory-write` stdio MCP server.
+Each Write batch gets a fresh Hermes profile containing only an `agent-memory-write` stdio MCP
+server.
 The exact toolset prevents Shell, Web, Hermes memory, skills, delegation, plugins, and personal
 MCP servers from entering the run. Secrets remain in the process environment and are never
 written to the temporary profile. `tool_mode = "text"` explicitly retains the compatibility
@@ -377,6 +407,25 @@ loop; native failures never switch to it automatically.
 The contributor model permits Meta to use prompts and completions for training. Memory refuses
 Hermes' unattended contributor route unless `host_allow_data_training = true` is explicitly set;
 use the non-contributor model for sensitive or proprietary sessions.
+
+Native Manage uses the same isolated Hermes execution stack with a distinct
+`agent-memory-manage` stdio MCP server and the three bounded review tools. Configure its provider,
+model, and contributor consent independently; consent under `[executor.write]` does not enable
+Manage:
+
+```toml
+[executor.manage]
+reasoner = "host"
+host = "hermes"
+host_provider = "openrouter"
+host_model = "meta/muse-spark-1.3-contributor"
+host_allow_data_training = true # sends Manage review material to a training-eligible tier
+tool_mode = "native"
+```
+
+Hermes reads OpenRouter authentication from `OPENROUTER_API_KEY`. Muse and Hermes may use the same
+key, but agent-memory does not silently copy Muse's credential store into Hermes. Export the key
+explicitly, or inject it into the isolated Hermes process through an authorized test harness.
 
 ### Muse Code
 

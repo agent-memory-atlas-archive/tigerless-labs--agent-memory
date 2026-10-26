@@ -45,4 +45,6 @@ files and point to it. Similarity alone belongs to the reviewed proposal path.
 
 Custom memory types occupy the truth namespace exclusively. Schemas cannot reuse archive, projection, schema or report directory names and silently write knowledge outside the discoverable truth tree.
 
+Memory identity and type identifiers match their complete slug grammar. Trailing newlines cannot create filenames whose identity changes when frontmatter is parsed.
+
 Malformed final operations or exhausted executor negotiation cannot mark an archived batch as distilled. The boundary reports validation failure before draining pending operations or publishing projection writes, preserving the raw backlog for a later retry.
