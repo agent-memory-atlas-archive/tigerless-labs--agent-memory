@@ -387,6 +387,8 @@ class Store:
         links: list[str] | None = None,
         valid_from: str | None = None,
         provenance: list[str] | None = None,
+        expected_source_hash: str | None = None,
+        expected_successor_hash: str | None = None,
     ) -> MemoryRecord:
         with store_lock(self.layout):
             current = self.find(name)
@@ -396,6 +398,7 @@ class Store:
                 raise ValidationError(
                     [FieldError("status", "correction requires an active memory")]
                 )
+            self._require_source_hash(current, expected_source_hash)
             now = self.clock.timestamp()
             if supersede_with:
                 successor = self.find(supersede_with)
@@ -405,6 +408,7 @@ class Store:
                     raise ValidationError(
                         [FieldError("supersede_with", "successor must be active")]
                     )
+                self._require_source_hash(successor, expected_successor_hash)
                 record_module.invalidate(current, successor.valid_from or now, supersede_with)
             if abstract is not None:
                 current.abstract = abstract.strip()
@@ -419,12 +423,13 @@ class Store:
                 current, replace_links=links is not None, provenance=provenance
             )
 
-    def delete(self, name: str) -> MemoryRecord:
+    def delete(self, name: str, *, expected_source_hash: str | None = None) -> MemoryRecord:
         """End the current interval while retaining the file for historical reads."""
         with store_lock(self.layout):
             current = self.find(name)
             if current is None or current.path is None:
                 raise NotFoundError(f"no memory named {name}")
+            self._require_source_hash(current, expected_source_hash)
             if not current.is_active():
                 return current
             now = self.clock.timestamp()
@@ -432,11 +437,29 @@ class Store:
             current.updated = now
             return self._write_locked(current)
 
-    def supersede(self, old: str, new: str) -> MemoryRecord:
-        return self.correct(old, supersede_with=new)
+    def supersede(
+        self,
+        old: str,
+        new: str,
+        *,
+        expected_source_hash: str | None = None,
+        expected_successor_hash: str | None = None,
+    ) -> MemoryRecord:
+        return self.correct(
+            old,
+            supersede_with=new,
+            expected_source_hash=expected_source_hash,
+            expected_successor_hash=expected_successor_hash,
+        )
 
     def merge(
-        self, names: list[str], abstract: str, body: str, name: str | None = None
+        self,
+        names: list[str],
+        abstract: str,
+        body: str,
+        name: str | None = None,
+        *,
+        expected_source_hashes: dict[str, str] | None = None,
     ) -> MemoryRecord:
         """Create one current memory and end its sources in a single locked transaction."""
         if len(names) < len(("first", "second")) or len(names) != len(set(names)):
@@ -446,6 +469,8 @@ class Store:
             if any(source is None or not source.is_active() for source in sources):
                 raise ValidationError([FieldError("names", "sources must be active memories")])
             active = [source for source in sources if source is not None]
+            for source in active:
+                self._require_source_hash(source, (expected_source_hashes or {}).get(source.name))
             if len({source.type for source in active}) != 1:
                 raise ValidationError([FieldError("type", "merge sources must share a type")])
             keeper = active[0]
@@ -455,20 +480,22 @@ class Store:
             links = sorted({link for source in active for link in source.links} - set(names))
             snapshots: dict[pathlib.Path, bytes | None] = {}
             try:
-                merged, changed = self._write_one({
-                    "name": target_name,
-                    "type": keeper.type,
-                    "fields": dict(keeper.fields),
-                    "abstract": abstract,
-                    "body": body,
-                    "links": links,
-                    "weight": max(source.weight for source in active),
-                    "create_group": True,
-                })
+                merged, changed = self._write_one(
+                    {
+                        "name": target_name,
+                        "type": keeper.type,
+                        "fields": dict(keeper.fields),
+                        "abstract": abstract,
+                        "body": body,
+                        "links": links,
+                        "weight": max(source.weight for source in active),
+                        "create_group": True,
+                    }
+                )
                 snapshots.update(changed)
-                merged.provenance = list(dict.fromkeys(
-                    pointer for source in active for pointer in source.provenance
-                ))
+                merged.provenance = list(
+                    dict.fromkeys(pointer for source in active for pointer in source.provenance)
+                )
                 assert merged.path is not None
                 payload = merged.to_text().encode("utf-8")
                 self._replace_file(merged.path, payload)
@@ -487,6 +514,13 @@ class Store:
                 self._project()
                 raise
             return merged
+
+    @staticmethod
+    def _require_source_hash(record: MemoryRecord, expected: str | None) -> None:
+        if expected is not None and record.source_hash != expected:
+            raise ValidationError(
+                [FieldError("updated", f"memory {record.name} changed since proposal generation")]
+            )
 
     def gc(self) -> list[str]:
         """Physically removes invalid files. A human runs this; Manage cannot reach it."""
@@ -516,8 +550,7 @@ class Store:
         assert record.path is not None
         previous = record.path.read_bytes() if record.path.exists() else None
         if previous is not None and (
-            record.source_hash is None
-            or hashlib.sha256(previous).hexdigest() != record.source_hash
+            record.source_hash is None or hashlib.sha256(previous).hexdigest() != record.source_hash
         ):
             raise ValidationError([FieldError("updated", "memory changed since it was read")])
         for excerpt in provenance or []:
@@ -565,8 +598,10 @@ class Store:
     ) -> None:
         if replace_links and len(record.links) != len(set(record.links)):
             raise ValidationError([FieldError("links", "duplicate target")])
-        names = set(record.links) if replace_links else set(record.links) - set(
-            existing.links if existing else []
+        names = (
+            set(record.links)
+            if replace_links
+            else set(record.links) - set(existing.links if existing else [])
         )
         for name in sorted(names):
             target = self.find(name)

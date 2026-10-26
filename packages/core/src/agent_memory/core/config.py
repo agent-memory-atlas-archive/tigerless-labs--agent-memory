@@ -114,6 +114,11 @@ class ManageConfig:
     max_splits_per_sleep: int = 2
     max_deletes_per_sleep: int = 3
     split_min_sections: int = 3
+    review_max_steps: int = 8
+    review_max_tool_calls: int = 24
+    review_tool_result_chars: int = 8000
+    review_evidence_chars: int = 32000
+    review_raw_session_evidence: bool = False
     git_commit: bool = True
     dream_report_dirname: str = "dream-reports"
 
@@ -208,6 +213,8 @@ class Config:
             raise ValueError("index.vector_enabled must be a boolean")
         if not isinstance(self.index.vector_model, str) or not self.index.vector_model.strip():
             raise ValueError("index.vector_model must be a non-empty string")
+        if not isinstance(self.manage.review_raw_session_evidence, bool):
+            raise ValueError("manage.review_raw_session_evidence must be a boolean")
 
     def save(self, store_root: pathlib.Path) -> pathlib.Path:
         path = pathlib.Path(store_root) / CONFIG_FILENAME
