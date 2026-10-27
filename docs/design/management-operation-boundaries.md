@@ -56,3 +56,5 @@ Import preflights all file entries before publishing any imported file. A malfor
 MCP dispatch validates the scalar and mapping types advertised by its tool catalogue before coercion or core execution. Recall limits must be positive integers, so invalid requests return validation errors without writing truth or terminating the server.
 
 An externally edited memory that fails validation leaves the retrieval projection immediately while its truth file remains intact. Repairing the file restores eligibility through the ordinary projection path.
+
+A memory validity interval cannot end before its start. Direct writes reject reversed intervals before publishing the Markdown projection and preserve the previous truth file.
