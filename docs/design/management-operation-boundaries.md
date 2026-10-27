@@ -52,3 +52,5 @@ Memory identity and type identifiers match their complete slug grammar. Trailing
 Malformed final operations or exhausted executor negotiation cannot mark an archived batch as distilled. The boundary reports validation failure before draining pending operations or publishing projection writes, preserving the raw backlog for a later retry.
 
 Import preflights all file entries before publishing any imported file. A malformed late entry leaves earlier truth unchanged.
+
+MCP dispatch validates the scalar and mapping types advertised by its tool catalogue before coercion or core execution. Recall limits must be positive integers, so invalid requests return validation errors without writing truth or terminating the server.
