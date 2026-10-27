@@ -99,4 +99,6 @@ Benchmark fingerprints include complete episode content, reference answers and e
 
 Benchmark attribution requires each compared arm to contain the same episode IDs exactly once. Shared corpus and retrieval fingerprints cannot license a comparison built from unpaired or duplicated episode results.
 
+Dataset loading rejects unequal session ID, date and transcript array lengths. A malformed benchmark cannot silently discard evidence before replay and still produce an apparently valid episode.
+
 The stdio adapter returns JSON-RPC parse or invalid-request errors for malformed frames and continues reading subsequent requests. An explicit null request ID receives a response, while requests without an ID retain notification behavior. Error codes and envelope rules follow https://www.jsonrpc.org/specification.
