@@ -58,3 +58,5 @@ MCP dispatch validates the scalar and mapping types advertised by its tool catal
 An externally edited memory that fails validation leaves the retrieval projection immediately while its truth file remains intact. Repairing the file restores eligibility through the ordinary projection path.
 
 A memory validity interval cannot end before its start. Direct writes reject reversed intervals before publishing the Markdown projection and preserve the previous truth file.
+
+The in-memory schema projection tracks schema file content. A long-lived store observes external edits, additions and removals instead of continuing to route writes using stale schema definitions.
