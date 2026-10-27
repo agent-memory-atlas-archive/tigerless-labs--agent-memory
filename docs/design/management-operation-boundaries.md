@@ -50,3 +50,5 @@ Custom memory types occupy the truth namespace exclusively. Schemas cannot reuse
 Memory identity and type identifiers match their complete slug grammar. Trailing newlines cannot create filenames whose identity changes when frontmatter is parsed.
 
 Malformed final operations or exhausted executor negotiation cannot mark an archived batch as distilled. The boundary reports validation failure before draining pending operations or publishing projection writes, preserving the raw backlog for a later retry.
+
+Import preflights all file entries before publishing any imported file. A malformed late entry leaves earlier truth unchanged.
